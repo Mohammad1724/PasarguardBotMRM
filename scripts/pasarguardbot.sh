@@ -2836,6 +2836,276 @@ action_urls() {
     pause
 }
 
+# ── Restore ──────────────────────────────────────────────────────────────────
+action_restore() {
+    local zip_path="$1"
+
+    [[ -f "$zip_path" ]] || die "Backup file not found: $zip_path"
+    [[ "$zip_path" == *.zip ]] || die "File must be a .zip backup."
+
+    is_installed || die "Install the bot first (option 1)."
+
+    # Validate ZIP contents
+    if ! command -v unzip &>/dev/null; then
+        info "Installing unzip..."
+        case "$PKG_MANAGER" in
+            apt-get) apt-get install -y unzip ;;
+            dnf|yum) yum install -y unzip ;;
+            pacman) pacman -Sy --noconfirm unzip ;;
+            *) die "unzip not found. Install it first." ;;
+        esac
+    fi
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d -t pasarguardbot-restore-XXXXXX)"
+    info "Extracting backup..."
+    if ! unzip -o "$zip_path" -d "$tmp_dir" >/dev/null 2>&1; then
+        rm -rf "$tmp_dir"
+        die "Failed to extract ZIP file."
+    fi
+
+    [[ -f "$tmp_dir/database.sql" ]] || {
+        rm -rf "$tmp_dir"
+        die "Invalid backup: database.sql not found in ZIP."
+    }
+
+    local sql_size
+    sql_size="$(du -sh "$tmp_dir/database.sql" | cut -f1)"
+    ok "Backup validated: database.sql (${sql_size})"
+
+    # Check for .env and extract CRYPTO_KEY
+    local crypto_key=""
+    if [[ -f "$tmp_dir/.env" ]]; then
+        crypto_key="$(grep -E '^CRYPTO_KEY=' "$tmp_dir/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+        if [[ -n "$crypto_key" ]]; then
+            ok "CRYPTO_KEY found in backup"
+        else
+            warn "CRYPTO_KEY not found in backup .env"
+        fi
+    else
+        warn "No .env in backup — CRYPTO_KEY will not be updated"
+    fi
+
+    # Confirm
+    echo
+    echo -e "${C_RED}${C_BOLD}  ⚠  RESTORE DATABASE${C_RESET}"
+    echo
+    echo "  This will:"
+    echo "  - DROP ALL existing tables in the database"
+    echo "  - Import data from: $zip_path"
+    echo "  - SQL size: ${sql_size}"
+    if [[ -n "$crypto_key" ]]; then
+        echo "  - Update CRYPTO_KEY in .env"
+    fi
+    echo
+    echo -e "  ${C_RED}ALL CURRENT DATA WILL BE LOST!${C_RESET}"
+    echo
+    read -r -p "Type 'RESTORE' to confirm: " confirm || true
+    [[ "$confirm" == "RESTORE" ]] || {
+        rm -rf "$tmp_dir"
+        info "Restore cancelled."
+        return 0
+    }
+
+    # Stop bot service before restore
+    info "Stopping bot service..."
+    if is_native_mode; then
+        systemctl stop pasarguardbot.service 2>/dev/null || true
+    else
+        docker_compose stop bot 2>/dev/null || true
+    fi
+
+    # Ensure MariaDB is running
+    if is_native_mode; then
+        if ! systemctl is-active --quiet pasarguardbot-mariadb.service 2>/dev/null; then
+            info "Starting MariaDB..."
+            systemctl start pasarguardbot-mariadb.service || die "Failed to start MariaDB"
+            sleep 3
+        fi
+    else
+        if ! docker_compose ps --status running mariadb 2>/dev/null | grep -q mariadb; then
+            info "Starting MariaDB container..."
+            docker_compose up -d mariadb 2>/dev/null || true
+            sleep 5
+        fi
+    fi
+
+    # Find mysql client binary
+    local mysql_bin=""
+    for bin in mariadb mysql; do
+        if command -v "$bin" &>/dev/null; then
+            mysql_bin="$(command -v "$bin")"
+            break
+        fi
+    done
+    [[ -n "$mysql_bin" ]] || {
+        rm -rf "$tmp_dir"
+        die "mariadb/mysql client not found. Install mariadb-client package."
+    }
+
+    # Get database credentials from .env
+    local db_url db_user db_pass db_host db_port db_name
+    db_url="$(get_env_value SQLALCHEMY_DATABASE_URL)"
+    db_name="$(echo "$db_url" | sed -E 's|.*/([^?]+).*|\1|')"
+    db_user="$(echo "$db_url" | sed -E 's|.*://([^:]+):.*|\1|')"
+    db_pass="$(echo "$db_url" | sed -E 's|.*://[^:]+:([^@]+)@.*|\1|')"
+    db_host="$(echo "$db_url" | sed -E 's|.*@([^:/]+).*|\1|')"
+    db_port="$(echo "$db_url" | sed -E 's|.*:([0-9]+)/.*|\1|')"
+    [[ "$db_port" =~ ^[0-9]+$ ]] || db_port=3306
+
+    # Build mysql connection args
+    local -a mysql_args=()
+    local sock="${CONFIG_DIR}/data/mariadb/pasarguardbot.sock"
+
+    if [[ -S "$sock" ]] && [[ "$db_host" == "127.0.0.1" || "$db_host" == "localhost" || "$db_host" == "mariadb" ]]; then
+        # Docker mode: connect via docker exec
+        if is_docker_mode && [[ "$db_host" == "mariadb" ]]; then
+            info "Docker mode: importing via docker exec..."
+            # Copy SQL into the container
+            docker cp "$tmp_dir/database.sql" pasarguardbot-mariadb:/tmp/restore.sql 2>/dev/null || \
+                die "Failed to copy SQL to MariaDB container"
+
+            # Drop all tables first
+            info "Dropping existing tables..."
+            local tables
+            tables="$(docker exec pasarguardbot-mariadb mariadb -u root -p"${MARIADB_ROOT_PASSWORD:-$(get_env_value MARIADB_ROOT_PASSWORD)}" -N -B -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db_name}';" 2>/dev/null || true)"
+
+            if [[ -n "$tables" ]]; then
+                local drop_sql="SET FOREIGN_KEY_CHECKS=0;"
+                while IFS= read -r table; do
+                    [[ -n "$table" ]] && drop_sql+="DROP TABLE IF EXISTS \`$table\`;"
+                done <<< "$tables"
+                drop_sql+="SET FOREIGN_KEY_CHECKS=1;"
+                docker exec -i pasarguardbot-mariadb mariadb -u root -p"$(get_env_value MARIADB_ROOT_PASSWORD)" "$db_name" <<< "$drop_sql" 2>/dev/null || true
+            fi
+
+            # Import SQL
+            info "Importing database..."
+            if docker exec -i pasarguardbot-mariadb mariadb -u root -p"$(get_env_value MARIADB_ROOT_PASSWORD)" < "$tmp_dir/database.sql" 2>/dev/null; then
+                ok "Database imported successfully"
+            else
+                rm -rf "$tmp_dir"
+                die "Database import failed"
+            fi
+
+            # Clean up in container
+            docker exec pasarguardbot-mariadb rm -f /tmp/restore.sql 2>/dev/null || true
+        else
+            # Native mode with socket
+            mysql_args+=(--socket="$sock")
+            mysql_args+=(-u root)
+
+            info "Dropping existing tables..."
+            local tables
+            tables="$("$mysql_bin" "${mysql_args[@]}" -N -B -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db_name}';" 2>/dev/null || true)"
+            if [[ -n "$tables" ]]; then
+                local drop_sql="SET FOREIGN_KEY_CHECKS=0;"
+                while IFS= read -r table; do
+                    [[ -n "$table" ]] && drop_sql+="DROP TABLE IF EXISTS \`$table\`;"
+                done <<< "$tables"
+                drop_sql+="SET FOREIGN_KEY_CHECKS=1;"
+                echo "$drop_sql" | "$mysql_bin" "${mysql_args[@]}" 2>/dev/null || true
+            fi
+
+            info "Importing database..."
+            MYSQL_PWD="" "$mysql_bin" "${mysql_args[@]}" < "$tmp_dir/database.sql" 2>/dev/null || {
+                rm -rf "$tmp_dir"
+                die "Database import failed"
+            }
+            ok "Database imported successfully"
+        fi
+    else
+        # TCP connection (Docker or remote)
+        if is_docker_mode && [[ "$db_host" == "mariadb" ]]; then
+            info "Docker mode: importing via docker exec..."
+            docker cp "$tmp_dir/database.sql" pasarguardbot-mariadb:/tmp/restore.sql 2>/dev/null || \
+                die "Failed to copy SQL to MariaDB container"
+
+            info "Dropping existing tables..."
+            local tables
+            tables="$(docker exec pasarguardbot-mariadb mariadb -u root -p"$(get_env_value MARIADB_ROOT_PASSWORD)" -N -B -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db_name}';" 2>/dev/null || true)"
+
+            if [[ -n "$tables" ]]; then
+                local drop_sql="SET FOREIGN_KEY_CHECKS=0;"
+                while IFS= read -r table; do
+                    [[ -n "$table" ]] && drop_sql+="DROP TABLE IF EXISTS \`$table\`;"
+                done <<< "$tables"
+                drop_sql+="SET FOREIGN_KEY_CHECKS=1;"
+                docker exec -i pasarguardbot-mariadb mariadb -u root -p"$(get_env_value MARIADB_ROOT_PASSWORD)" "$db_name" <<< "$drop_sql" 2>/dev/null || true
+            fi
+
+            info "Importing database..."
+            if docker exec -i pasarguardbot-mariadb mariadb -u root -p"$(get_env_value MARIADB_ROOT_PASSWORD)" < "$tmp_dir/database.sql" 2>/dev/null; then
+                ok "Database imported successfully"
+            else
+                rm -rf "$tmp_dir"
+                die "Database import failed"
+            fi
+            docker exec pasarguardbot-mariadb rm -f /tmp/restore.sql 2>/dev/null || true
+        else
+            mysql_args+=(--host="$db_host" --port="$db_port" --user="$db_user")
+            info "Dropping existing tables..."
+            local tables
+            tables="$(MYSQL_PWD="$db_pass" "$mysql_bin" "${mysql_args[@]}" -N -B -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db_name}';" 2>/dev/null || true)"
+            if [[ -n "$tables" ]]; then
+                local drop_sql="SET FOREIGN_KEY_CHECKS=0;"
+                while IFS= read -r table; do
+                    [[ -n "$table" ]] && drop_sql+="DROP TABLE IF EXISTS \`$table\`;"
+                done <<< "$tables"
+                drop_sql+="SET FOREIGN_KEY_CHECKS=1;"
+                echo "$drop_sql" | MYSQL_PWD="$db_pass" "$mysql_bin" "${mysql_args[@]}" 2>/dev/null || true
+            fi
+
+            info "Importing database..."
+            MYSQL_PWD="$db_pass" "$mysql_bin" "${mysql_args[@]}" "$db_name" < "$tmp_dir/database.sql" 2>/dev/null || {
+                rm -rf "$tmp_dir"
+                die "Database import failed"
+            }
+            ok "Database imported successfully"
+        fi
+    fi
+
+    # Update CRYPTO_KEY in .env
+    if [[ -n "$crypto_key" ]]; then
+        info "Updating CRYPTO_KEY in .env..."
+        set_env_var "$ENV_FILE" "CRYPTO_KEY" "$crypto_key"
+
+        # Also restore WEBHOOK_SECRET if present
+        local webhook_secret
+        webhook_secret="$(grep -E '^WEBHOOK_SECRET=' "$tmp_dir/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+        if [[ -n "$webhook_secret" ]]; then
+            set_env_var "$ENV_FILE" "WEBHOOK_SECRET" "$webhook_secret"
+            ok "WEBHOOK_SECRET updated in .env"
+        fi
+
+        ok "CRYPTO_KEY restored from backup"
+    fi
+
+    # Cleanup
+    rm -rf "$tmp_dir"
+
+    echo
+    ok "════════════════════════════════════════════"
+    ok "  RESTORE COMPLETED SUCCESSFULLY"
+    ok "════════════════════════════════════════════"
+    echo
+    info "Next steps:"
+    echo "  1. Restart the bot to apply changes:"
+    echo "     pasarguardbot restart"
+    echo
+    if [[ -n "$crypto_key" ]]; then
+        info "CRYPTO_KEY was restored from the backup."
+    else
+        warn "CRYPTO_KEY was NOT updated. If panel passwords become unreadable,"
+        warn "manually set CRYPTO_KEY in ${ENV_FILE}"
+    fi
+    echo
+    read -r -p "Restart the bot now? (Y/n): " do_restart || true
+    if [[ "${do_restart,,}" != "n" ]]; then
+        action_restart_quiet
+    fi
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 main_menu() {
     while true; do
@@ -2873,9 +3143,14 @@ case "${1:-}" in
     restart)        action_restart ;;
     status)         action_status ;;
     urls)           action_urls ;;
+    restore)
+        require_root
+        [[ -n "${2:-}" ]] || die "Usage: pasarguardbot restore /path/to/backup.zip"
+        action_restore "$2"
+        ;;
     ""|menu)        main_menu ;;
     *)
-        echo "Usage: pasarguardbot [install|uninstall|purge|update|update-script|logs|restart|status|urls|menu]"
+        echo "Usage: pasarguardbot [install|uninstall|purge|update|update-script|logs|restart|status|urls|restore <backup.zip>|menu]"
         exit 1
         ;;
 esac
