@@ -75,15 +75,6 @@ async def _cleanup_restore_file(admin_id: int) -> None:
         logger.warning("Failed to cleanup restore file: %s", exc)
 
 
-async def _store_restore_path(admin_id: int, path: str) -> None:
-    """Store the restore ZIP path in Redis."""
-    redis = await get_redis()
-    if redis is None:
-        return
-    key = f"pasarguardbot:restore_zip:{admin_id}"
-    await redis.set(key, path, ex=300)  # 5 minutes
-
-
 async def _get_restore_path(admin_id: int) -> str | None:
     """Get the stored restore ZIP path from Redis."""
     redis = await get_redis()
