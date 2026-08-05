@@ -2,6 +2,7 @@
 Webhook router for handling Marzban events.
 """
 
+import hmac
 import json
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,19 +16,31 @@ logger = get_logger(__name__)
 
 webhook_router = APIRouter()
 
+# Headers that must never appear in logs (even at DEBUG level).
+_SENSITIVE_HEADER_NAMES = frozenset({
+    "x-webhook-secret",
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+})
+
 
 @webhook_router.post("/webhook", response_model=WebhookResponse)
 async def handle_webhook(request: Request) -> WebhookResponse:
     """Handle incoming webhook events from Marzban."""
 
     try:
-        # Log all headers
+        # Log headers (redact sensitive ones)
         logger.debug("📥 WEBHOOK REQUEST RECEIVED")
         logger.debug("\n📋 HEADERS:")
         for header_name, header_value in request.headers.items():
-            logger.debug(f"  {header_name}: {header_value}")
+            if header_name.lower() in _SENSITIVE_HEADER_NAMES:
+                logger.debug("  %s: ***REDACTED***", header_name)
+            else:
+                logger.debug("  %s: %s", header_name, header_value)
 
-        # Check webhook secret
+        # Check webhook secret — constant-time comparison to prevent timing attacks.
         signature = request.headers.get("x-webhook-secret")
         if not signature:
             logger.info("\n❌ ERROR: Signature header missing")
@@ -35,7 +48,7 @@ async def handle_webhook(request: Request) -> WebhookResponse:
 
         logger.debug("\n🔐 Received webhook secret header")
 
-        if signature != get_webhook_secret():
+        if not hmac.compare_digest(signature.encode("utf-8"), get_webhook_secret().encode("utf-8")):
             logger.info("❌ ERROR: Invalid shared secret")
             raise HTTPException(status_code=403, detail="Invalid shared secret")
 
