@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # PasarguardBot — install & management script (Docker + Native)
-# https://github.com/AmirKenzo/PasarguardBot
+# https://github.com/Mohammad1724/PasarguardBotMRM
 #
 # Install:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/main/scripts/pasarguardbot.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/main/scripts/pasarguardbot.sh)
 # Then choose Docker/Native and main (stable) or dev (testing).
 set -euo pipefail
 
@@ -23,15 +23,15 @@ readonly MANAGER_SCRIPT="${CONFIG_DIR}/pasarguardbot.sh"
 # Override while testing: PASARGUARDBOT_BRANCH=dev
 readonly DEFAULT_REPO_BRANCH="${PASARGUARDBOT_BRANCH:-main}"
 readonly REPO_BRANCH="${DEFAULT_REPO_BRANCH}"
-readonly SCRIPT_RAW_URL="https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/${REPO_BRANCH}/scripts/pasarguardbot.sh"
+readonly SCRIPT_RAW_URL="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${REPO_BRANCH}/scripts/pasarguardbot.sh"
 readonly NETPLAN_FIX_SCRIPT_NAME="fix-docker-netplan.sh"
 readonly NETPLAN_FIX_INSTALLED="${CONFIG_DIR}/${NETPLAN_FIX_SCRIPT_NAME}"
 readonly NETPLAN_FIX_RAW_URL="${SCRIPT_RAW_URL/pasarguardbot.sh/${NETPLAN_FIX_SCRIPT_NAME}}"
-readonly COMPOSE_RAW_URL="https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/${REPO_BRANCH}/docker-compose.yml"
-readonly ENV_EXAMPLE_RAW_URL="https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/${REPO_BRANCH}/.env.example"
-readonly REPO_GIT_URL="https://github.com/AmirKenzo/PasarguardBot.git"
+readonly COMPOSE_RAW_URL="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${REPO_BRANCH}/docker-compose.yml"
+readonly ENV_EXAMPLE_RAW_URL="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${REPO_BRANCH}/.env.example"
+readonly REPO_GIT_URL="https://github.com/Mohammad1724/PasarguardBotMRM.git"
 readonly PHPMYADMIN_ARCHIVE_URL="https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.tar.gz"
-readonly BOT_IMAGE="ghcr.io/amirkenzo/pasarguardbot"
+readonly BOT_IMAGE="ghcr.io/mohammad1724/pasarguardbotmrm"
 readonly FASTAPI_PORT_DEFAULT=6160
 readonly REDIS_PORT=6161
 readonly MARIADB_PORT=6162
@@ -256,17 +256,17 @@ get_repo_branch() {
 
 repo_archive_url() {
     local branch="${1:-$(get_repo_branch)}"
-    printf 'https://github.com/AmirKenzo/PasarguardBot/archive/refs/heads/%s.tar.gz' "$branch"
+    printf 'https://github.com/Mohammad1724/PasarguardBotMRM/archive/refs/heads/%s.tar.gz' "$branch"
 }
 
 compose_raw_url_for_branch() {
     local branch="${1:-$(get_repo_branch)}"
-    printf 'https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/%s/docker-compose.yml' "$branch"
+    printf 'https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/%s/docker-compose.yml' "$branch"
 }
 
 env_example_raw_url_for_branch() {
     local branch="${1:-$(get_repo_branch)}"
-    printf 'https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/%s/.env.example' "$branch"
+    printf 'https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/%s/.env.example' "$branch"
 }
 
 # Sets SELECTED_REPO_BRANCH. Returns 1 if cancelled/invalid.
@@ -1216,8 +1216,8 @@ validate_compose_file() {
         err "Compose file is empty."
         return 1
     }
-    grep -qE 'ghcr\.io/amirkenzo/pasarguardbot(:|\$\{)' "$file" || {
-        err "Compose file missing required image ghcr.io/amirkenzo/pasarguardbot"
+    grep -qE 'ghcr\.io/mohammad1724/pasarguardbotmrm(:|\$\{)' "$file" || {
+        err "Compose file missing required image ghcr.io/mohammad1724/pasarguardbotmrm"
         return 1
     }
     if grep -E '^\s+build:' "$file" >/dev/null 2>&1; then
@@ -2565,7 +2565,7 @@ action_update_docker() {
     wait_for_containers_healthy || true
     prune_dangling_images_safe
 
-    script_url="https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/${branch}/scripts/pasarguardbot.sh"
+    script_url="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${branch}/scripts/pasarguardbot.sh"
     tmp_mgr="$(mktemp)"
     if curl_download "$script_url" "$tmp_mgr"; then
         info "Refreshing manager script from branch '${branch}'..."
@@ -2634,7 +2634,7 @@ action_update_script() {
     local tmp new_ver old_ver branch script_url
     tmp="$(mktemp)"
     branch="$(get_repo_branch)"
-    script_url="https://raw.githubusercontent.com/AmirKenzo/PasarguardBot/${branch}/scripts/pasarguardbot.sh"
+    script_url="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${branch}/scripts/pasarguardbot.sh"
 
     info "Downloading latest manager script from GitHub (branch ${branch})..."
     if ! curl_download "$script_url" "$tmp"; then
