@@ -128,6 +128,31 @@ def _update_env_crypto_key(env_path: Path, crypto_key: str) -> bool:
     return True
 
 
+def _update_env_webhook_secret(env_path: Path, webhook_secret: str) -> bool:
+    """Update WEBHOOK_SECRET in the current .env file."""
+    if not env_path.is_file():
+        return False
+
+    content = env_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    found = False
+    new_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("WEBHOOK_SECRET=") and not stripped.startswith("#"):
+            new_lines.append(f"WEBHOOK_SECRET={webhook_secret}")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        new_lines.append(f"WEBHOOK_SECRET={webhook_secret}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    return True
+
+
 def _find_env_file() -> Path | None:
     """Find the active .env file path."""
     config_dir = os.environ.get("PASARGUARDBOT_CONFIG_DIR", "/opt/pasarguardbot")
@@ -175,17 +200,20 @@ async def validate_backup_zip(zip_path: Path) -> dict:
 
 
 async def _drop_all_tables(conn: MysqlConnection) -> int:
-    """Drop all tables in the database. Returns count of dropped tables."""
+    """Drop all tables and views in the database. Returns count of dropped objects."""
     mysql_bin = _resolve_mysql_binary()
 
-    # First, get list of tables
+    # First, get list of tables and views
     list_cmd = [
         mysql_bin,
         f"--user={conn.user}",
         "--batch",
         "--skip-column-names",
         "-e",
-        f"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='{conn.database}';",
+        (
+            f"SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
+            f"WHERE TABLE_SCHEMA='{conn.database}';"
+        ),
     ]
 
     socket_path = _default_native_socket()
@@ -210,13 +238,25 @@ async def _drop_all_tables(conn: MysqlConnection) -> int:
         err = (stderr or b"").decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"Failed to list tables: {err}")
 
-    tables = [t.strip() for t in stdout.decode("utf-8").strip().split("\n") if t.strip()]
+    tables = []
+    views = []
+    for line in stdout.decode("utf-8").strip().split("\n"):
+        parts = line.strip().split("\t")
+        if len(parts) == 2:
+            name, table_type = parts
+            if table_type == "VIEW":
+                views.append(name)
+            else:
+                tables.append(name)
 
-    if not tables:
+    if not tables and not views:
         return 0
 
-    # Disable foreign key checks and drop all tables
+    # Disable foreign key checks and drop all views then tables
     drop_statements = "SET FOREIGN_KEY_CHECKS=0;\n"
+    # Drop views first (they may reference tables)
+    for view in views:
+        drop_statements += f"DROP VIEW IF EXISTS `{view}`;\n"
     for table in tables:
         drop_statements += f"DROP TABLE IF EXISTS `{table}`;\n"
     drop_statements += "SET FOREIGN_KEY_CHECKS=1;\n"
@@ -243,9 +283,9 @@ async def _drop_all_tables(conn: MysqlConnection) -> int:
 
     if process.returncode != 0:
         err = (stderr or b"").decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"Failed to drop tables: {err}")
+        raise RuntimeError(f"Failed to drop tables/views: {err}")
 
-    return len(tables)
+    return len(tables) + len(views)
 
 
 async def _import_sql(conn: MysqlConnection, sql_path: Path) -> None:
@@ -365,27 +405,14 @@ async def restore_from_zip(
                     result.crypto_key_restored = True
                     logger.info("%s Restore: CRYPTO_KEY updated in .env", LogTag.JOB)
 
-                    # Also update WEBHOOK_SECRET if present
-                    with zipfile.ZipFile(zip_path, "r") as zf:
-                        env_content = zf.read(".env").decode("utf-8", errors="replace")
-                    webhook_secret = _extract_webhook_secret_from_env(env_content)
-                    if webhook_secret:
-                        # Update webhook_secret in .env too
-                        content = env_path.read_text(encoding="utf-8")
-                        lines = content.splitlines()
-                        found_ws = False
-                        new_lines = []
-                        for line in lines:
-                            stripped = line.strip()
-                            if stripped.startswith("WEBHOOK_SECRET=") and not stripped.startswith("#"):
-                                new_lines.append(f"WEBHOOK_SECRET={webhook_secret}")
-                                found_ws = True
-                            else:
-                                new_lines.append(line)
-                        if not found_ws:
-                            new_lines.append(f"WEBHOOK_SECRET={webhook_secret}")
-                        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-                        logger.info("%s Restore: WEBHOOK_SECRET updated in .env", LogTag.JOB)
+                    # Also update WEBHOOK_SECRET if present (read from extracted .env)
+                    backup_env_path = temp_dir / ".env"
+                    if backup_env_path.is_file():
+                        backup_env_content = await asyncio.to_thread(backup_env_path.read_text, encoding="utf-8")
+                        webhook_secret = _extract_webhook_secret_from_env(backup_env_content)
+                        if webhook_secret:
+                            _update_env_webhook_secret(env_path, webhook_secret)
+                            logger.info("%s Restore: WEBHOOK_SECRET updated in .env", LogTag.JOB)
             else:
                 logger.warning("%s Restore: .env not found, CRYPTO_KEY not updated", LogTag.JOB)
                 result.errors.append("Could not find .env to update CRYPTO_KEY")
