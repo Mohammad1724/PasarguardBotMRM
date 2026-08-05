@@ -1,5 +1,6 @@
 """Message handlers for admin backup."""
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -106,6 +107,11 @@ async def message_handler_backup_document(event: Message):
         await event.client.download_media(event.document, file=str(zip_path))
     except Exception as exc:
         logger.error("%s Failed to download restore file: %s", LogTag.JOB, exc)
+        # Clean up temp dir on failure
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
         await progress_msg.edit(
             f"❌ خطا در دانلود فایل: {exc}",
             buttons=keyboards.restore_waiting_buttons(),
