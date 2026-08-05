@@ -39,8 +39,8 @@ ARG VERSION=dev
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="PasarguardBot" \
       org.opencontainers.image.description="PasarguardBot Telegram management bot" \
-      org.opencontainers.image.source="https://github.com/AmirKenzo/PasarguardBot" \
-      org.opencontainers.image.url="https://github.com/AmirKenzo/PasarguardBot" \
+      org.opencontainers.image.source="https://github.com/Mohammad1724/PasarguardBotMRM" \
+      org.opencontainers.image.url="https://github.com/Mohammad1724/PasarguardBotMRM" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
 
