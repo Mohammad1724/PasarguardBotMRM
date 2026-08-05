@@ -54,34 +54,62 @@ async def _edit_menu(event: events.CallbackQuery.Event) -> None:
 
 
 async def _cleanup_restore_file(admin_id: int) -> None:
-    """Clean up stored restore ZIP path and file."""
+    """Clean up stored restore ZIP path and file.
+
+    Uses both Redis (if available) and deterministic temp directory for cleanup.
+    """
+    import shutil
+
+    # Try Redis-based cleanup first
     redis = await get_redis()
-    if redis is None:
-        return
+    if redis:
+        try:
+            key = f"pasarguardbot:restore_zip:{admin_id}"
+            zip_path_str = await redis.get(key)
+            if zip_path_str:
+                zip_path = Path(zip_path_str)
+                if zip_path.is_file():
+                    zip_path.unlink(missing_ok=True)
+                try:
+                    zip_path.parent.rmdir()
+                except OSError:
+                    pass
+                await redis.delete(key)
+        except Exception as exc:
+            logger.warning("Redis cleanup for restore file failed: %s", exc)
+
+    # Always clean up deterministic temp directory too
     try:
-        key = f"pasarguardbot:restore_zip:{admin_id}"
-        zip_path_str = await redis.get(key)
-        if zip_path_str:
-            zip_path = Path(zip_path_str)
-            if zip_path.is_file():
-                zip_path.unlink(missing_ok=True)
-            # Also try to remove the parent temp dir
-            try:
-                zip_path.parent.rmdir()
-            except OSError:
-                pass
-            await redis.delete(key)
-    except Exception as exc:
-        logger.warning("Failed to cleanup restore file: %s", exc)
+        import tempfile
+        d = Path(tempfile.gettempdir()) / "pasarguardbot-restores" / str(admin_id)
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
 
 
 async def _get_restore_path(admin_id: int) -> str | None:
-    """Get the stored restore ZIP path from Redis."""
+    """Get the stored restore ZIP path.
+
+    Checks Redis first, then falls back to deterministic temp directory.
+    """
+    # Try Redis
     redis = await get_redis()
-    if redis is None:
-        return None
-    key = f"pasarguardbot:restore_zip:{admin_id}"
-    return await redis.get(key)
+    if redis:
+        key = f"pasarguardbot:restore_zip:{admin_id}"
+        path_str = await redis.get(key)
+        if path_str:
+            return path_str
+
+    # Fallback: check deterministic temp directory
+    import tempfile
+    d = Path(tempfile.gettempdir()) / "pasarguardbot-restores" / str(admin_id)
+    if d.exists():
+        # Find any .zip file in the directory
+        for f in d.glob("*.zip"):
+            return str(f)
+
+    return None
 
 
 async def callback_backup(event: events.CallbackQuery.Event):
@@ -151,7 +179,7 @@ async def callback_backup(event: events.CallbackQuery.Event):
 
         await event.edit(texts.RESTORE_WORKING, parse_mode="md")
 
-        # Get stored zip path from Redis
+        # Get stored zip path from Redis (or deterministic fallback)
         zip_path_str = await _get_restore_path(event.sender_id)
 
         if not zip_path_str:
@@ -181,18 +209,11 @@ async def callback_backup(event: events.CallbackQuery.Event):
         await _cleanup_restore_file(event.sender_id)
 
         hours = await _current_interval()
-        if result.ok:
-            await event.edit(
-                f"{result.message}",
-                buttons=keyboards.menu_buttons(hours),
-                parse_mode="md",
-            )
-        else:
-            await event.edit(
-                f"{result.message}",
-                buttons=keyboards.menu_buttons(hours),
-                parse_mode="md",
-            )
+        await event.edit(
+            result.message,
+            buttons=keyboards.menu_buttons(hours),
+            parse_mode="md",
+        )
 
         await clear_step(event.sender_id)
         return
