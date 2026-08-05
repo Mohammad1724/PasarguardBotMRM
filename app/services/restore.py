@@ -25,7 +25,6 @@ from app.services.mysql_utils import (
     escape_mysql_identifier,
     escape_mysql_string,
     parse_mysql_url,
-    resolve_mysql_client_binary,
 )
 
 logger = get_logger(__name__)
@@ -136,12 +135,17 @@ def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
     """Extract ZIP entries only if they don't escape the destination directory.
 
     Prevents Zip Slip / path traversal attacks via crafted ZIP files.
+    Note: Python's zipfile.extractall does NOT create symlinks — symlink entries
+    in ZIPs are extracted as regular files containing the symlink target path.
     """
     dest_resolved = dest.resolve()
     for member in zf.namelist():
+        # Skip directory entries and the root marker
+        if not member or member in (".", "/"):
+            continue
         # Resolve the target path for this entry
         member_path = (dest / member).resolve()
-        # Ensure it's within the destination directory
+        # Ensure it's strictly within the destination directory
         try:
             member_path.relative_to(dest_resolved)
         except ValueError:
@@ -264,7 +268,12 @@ async def _drop_all_tables(conn) -> int:
 
 
 async def _import_sql(conn, sql_path: Path) -> None:
-    """Import SQL file into the database using streaming to avoid OOM."""
+    """Import SQL file into the database using streaming to avoid OOM.
+
+    Uses stdout=DEVNULL to prevent pipe-buffer deadlock: if stdout were PIPE,
+    the mysql process could block writing to a full stdout pipe while we're
+    blocked writing to stdin, causing a deadlock.
+    """
     cmd, env = build_mysql_cmd_args(
         conn,
         include_database=True,
@@ -274,12 +283,12 @@ async def _import_sql(conn, sql_path: Path) -> None:
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
 
-    # Stream file in 1MB chunks to avoid loading entire file into memory
+    # Stream file in 1MB chunks and drain stderr concurrently to avoid deadlock.
     async def _stream_file():
         assert process.stdin is not None
         try:
@@ -289,14 +298,25 @@ async def _import_sql(conn, sql_path: Path) -> None:
                     if not chunk:
                         break
                     process.stdin.write(chunk)
+        except BrokenPipeError:
+            pass  # Process died; we'll catch the error from returncode
+        except ConnectionResetError:
+            pass  # Process died; we'll catch the error from returncode
         finally:
-            process.stdin.close()
+            try:
+                process.stdin.close()
+            except Exception:
+                pass
 
-    await asyncio.gather(_stream_file(), process.wait())
-    stderr = await process.stderr.read()
+    async def _drain_stderr():
+        assert process.stderr is not None
+        return await process.stderr.read()
+
+    _, stderr_bytes = await asyncio.gather(_stream_file(), _drain_stderr())
+    await process.wait()
 
     if process.returncode != 0:
-        err = (stderr or b"").decode("utf-8", errors="replace").strip()
+        err = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"SQL import failed: {err}")
 
 
