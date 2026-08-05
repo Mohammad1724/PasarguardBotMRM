@@ -21,6 +21,26 @@ logger = get_logger(__name__)
 
 _MAX_RESTORE_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 
+# Deterministic temp directory for restore files — allows cleanup without Redis.
+_RESTORE_TMP_BASE = Path(tempfile.gettempdir()) / "pasarguardbot-restores"
+
+
+def _restore_temp_dir(admin_id: int) -> Path:
+    """Return a deterministic temp directory for a given admin's restore upload."""
+    d = _RESTORE_TMP_BASE / str(admin_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cleanup_restore_dir(admin_id: int) -> None:
+    """Remove the temp directory for an admin's restore upload."""
+    try:
+        d = _RESTORE_TMP_BASE / str(admin_id)
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
 
 async def _current_interval() -> int:
     settings = await SettingsManager().get_settings()
@@ -97,21 +117,17 @@ async def message_handler_backup_document(event: Message):
         )
         raise events.StopPropagation
 
-    # Download the file
+    # Download the file — use deterministic temp dir so cleanup works without Redis
     progress_msg = await event.respond("⏳ در حال دانلود فایل بکاپ...")
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="pasarguardbot-restore-"))
+    temp_dir = _restore_temp_dir(event.sender_id)
     zip_path = temp_dir / filename
 
     try:
         await event.client.download_media(event.document, file=str(zip_path))
     except Exception as exc:
         logger.error("%s Failed to download restore file: %s", LogTag.JOB, exc)
-        # Clean up temp dir on failure
-        try:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
+        _cleanup_restore_dir(event.sender_id)
         await progress_msg.edit(
             f"❌ خطا در دانلود فایل: {exc}",
             buttons=keyboards.restore_waiting_buttons(),
@@ -120,6 +136,7 @@ async def message_handler_backup_document(event: Message):
         raise events.StopPropagation
 
     if not zip_path.is_file() or zip_path.stat().st_size == 0:
+        _cleanup_restore_dir(event.sender_id)
         await progress_msg.edit(
             texts.RESTORE_INVALID_FILE,
             buttons=keyboards.restore_waiting_buttons(),
@@ -136,15 +153,10 @@ async def message_handler_backup_document(event: Message):
             buttons=keyboards.restore_waiting_buttons(),
             parse_mode="md",
         )
-        # Clean up
-        try:
-            zip_path.unlink(missing_ok=True)
-            temp_dir.rmdir()
-        except Exception:
-            pass
+        _cleanup_restore_dir(event.sender_id)
         raise events.StopPropagation
 
-    # Store zip path in Redis temporarily
+    # Store zip path in Redis temporarily (fallback: deterministic path works without Redis)
     redis = await get_redis()
     if redis:
         key = f"pasarguardbot:restore_zip:{event.sender_id}"
