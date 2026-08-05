@@ -2,8 +2,6 @@
 
 from telethon import Button
 
-from app.telegram.keyboards.admin import panel_back
-
 
 def menu_buttons(interval_hours: int) -> list:
     interval_label = "⏸ خودکار خاموش" if interval_hours <= 0 else f"⏱ فاصله: هر {interval_hours} ساعت"
@@ -36,7 +34,3 @@ def restore_waiting_buttons() -> list:
     return [
         [Button.inline("❌ لغو", data="backup_restore_cancel")],
     ]
-
-
-def panel_back_buttons():
-    return panel_back
