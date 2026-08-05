@@ -41,7 +41,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/amirkenzo/pasarguardbot
+          images: ghcr.io/mohammad1724/pasarguardbotmrm
           tags: |
             type=raw,value=dev
 
