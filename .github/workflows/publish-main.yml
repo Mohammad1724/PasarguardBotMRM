@@ -44,7 +44,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/amirkenzo/pasarguardbot
+          images: ghcr.io/mohammad1724/pasarguardbotmrm
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
             type=ref,event=tag
