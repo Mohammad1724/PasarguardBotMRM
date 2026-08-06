@@ -1,5 +1,9 @@
 """Callback handlers for admin backup."""
 
+import asyncio
+import contextlib
+import shutil
+import tempfile
 from pathlib import Path
 
 from telethon import events
@@ -53,13 +57,15 @@ async def _edit_menu(event: events.CallbackQuery.Event) -> None:
     )
 
 
+def _path_is_file(path: Path) -> bool:
+    return path.is_file()
+
+
 async def _cleanup_restore_file(admin_id: int) -> None:
     """Clean up stored restore ZIP path and file.
 
     Uses both Redis (if available) and deterministic temp directory for cleanup.
     """
-    import shutil
-
     # Try Redis-based cleanup first
     redis = await get_redis()
     if redis:
@@ -68,22 +74,19 @@ async def _cleanup_restore_file(admin_id: int) -> None:
             zip_path_str = await redis.get(key)
             if zip_path_str:
                 zip_path = Path(zip_path_str)
-                if zip_path.is_file():
-                    zip_path.unlink(missing_ok=True)
-                try:
+                if await asyncio.to_thread(_path_is_file, zip_path):
+                    await asyncio.to_thread(zip_path.unlink, True)
+                with contextlib.suppress(OSError):
                     zip_path.parent.rmdir()
-                except OSError:
-                    pass
                 await redis.delete(key)
         except Exception as exc:
             logger.warning("Redis cleanup for restore file failed: %s", exc)
 
     # Always clean up deterministic temp directory too
     try:
-        import tempfile
         d = Path(tempfile.gettempdir()) / "pasarguardbot-restores" / str(admin_id)
         if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, d, True)
     except Exception:
         pass
 
@@ -102,7 +105,6 @@ async def _get_restore_path(admin_id: int) -> str | None:
             return path_str
 
     # Fallback: check deterministic temp directory
-    import tempfile
     d = Path(tempfile.gettempdir()) / "pasarguardbot-restores" / str(admin_id)
     if d.exists():
         # Find any .zip file in the directory
@@ -192,7 +194,7 @@ async def callback_backup(event: events.CallbackQuery.Event):
             return
 
         zip_path = Path(zip_path_str)
-        if not zip_path.is_file():
+        if not await asyncio.to_thread(_path_is_file, zip_path):
             await event.edit(
                 "❌ فایل بکاپ حذف شده. لطفاً دوباره تلاش کنید.",
                 buttons=keyboards.menu_buttons(await _current_interval()),
