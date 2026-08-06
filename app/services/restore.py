@@ -11,6 +11,7 @@ Security measures:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import tempfile
@@ -80,10 +81,8 @@ def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
         if fd is not None:
             os.close(fd)
         if tmp_path is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
 
 
 def _update_env_var(env_path: Path, var_name: str, value: str) -> bool:
@@ -148,19 +147,19 @@ def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
         # Ensure it's strictly within the destination directory
         try:
             member_path.relative_to(dest_resolved)
-        except ValueError:
+        except ValueError as err:
             raise ValueError(
                 f"Zip entry attempts path traversal: {member!r}"
-            )
+            ) from None
     zf.extractall(dest)
 
 
 # ---------------------------------------------------------------------------
-# Validation
+# Sync helpers (called via asyncio.to_thread from async context)
 # ---------------------------------------------------------------------------
 
-async def validate_backup_zip(zip_path: Path) -> dict:
-    """Validate a backup ZIP and return its contents info."""
+def _validate_zip_sync(zip_path: Path) -> dict:
+    """Synchronous ZIP validation — called via asyncio.to_thread."""
     info: dict = {
         "has_sql": False,
         "has_env": False,
@@ -188,6 +187,11 @@ async def validate_backup_zip(zip_path: Path) -> dict:
         logger.error("%s Invalid backup ZIP: %s", LogTag.JOB, exc)
 
     return info
+
+
+async def validate_backup_zip(zip_path: Path) -> dict:
+    """Validate a backup ZIP and return its contents info."""
+    return await asyncio.to_thread(_validate_zip_sync, zip_path)
 
 
 # ---------------------------------------------------------------------------
@@ -258,13 +262,18 @@ async def _drop_all_tables(conn) -> int:
         stderr=asyncio.subprocess.PIPE,
         env=drop_env,
     )
-    stdout, stderr = await process.communicate(input=drop_statements.encode("utf-8"))
+    _, stderr = await process.communicate(input=drop_statements.encode("utf-8"))
 
     if process.returncode != 0:
         err = (stderr or b"").decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"Failed to drop tables/views: {err}")
 
     return len(tables) + len(views)
+
+
+def _read_sql_chunk(f, size: int) -> bytes:
+    """Read a chunk from file — called via asyncio.to_thread."""
+    return f.read(size)
 
 
 async def _import_sql(conn, sql_path: Path) -> None:
@@ -292,21 +301,18 @@ async def _import_sql(conn, sql_path: Path) -> None:
     async def _stream_file():
         assert process.stdin is not None
         try:
-            with open(sql_path, "rb") as f:
+            loop = asyncio.get_running_loop()
+            with open(sql_path, "rb") as f:  # noqa: ASYNC230
                 while True:
-                    chunk = await asyncio.to_thread(f.read, 1024 * 1024)  # 1MB chunks
+                    chunk = await loop.run_in_executor(None, f.read, 1024 * 1024)
                     if not chunk:
                         break
                     process.stdin.write(chunk)
-        except BrokenPipeError:
-            pass  # Process died; we'll catch the error from returncode
-        except ConnectionResetError:
+        except (BrokenPipeError, ConnectionResetError):
             pass  # Process died; we'll catch the error from returncode
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 process.stdin.close()
-            except Exception:
-                pass
 
     async def _drain_stderr():
         assert process.stderr is not None
@@ -318,6 +324,18 @@ async def _import_sql(conn, sql_path: Path) -> None:
     if process.returncode != 0:
         err = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"SQL import failed: {err}")
+
+
+# ---------------------------------------------------------------------------
+# Sync file helpers (called via asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+def _path_is_file(path: Path) -> bool:
+    return path.is_file()
+
+
+def _path_stat_size(path: Path) -> int:
+    return path.stat().st_size
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +363,7 @@ async def restore_from_zip(
     result = RestoreResult(ok=False, message="")
     temp_dir = None
     lock_acquired = False
+    redis = None
 
     # ── Step 0: Distributed lock ──
     from app.db.redis import get_redis
@@ -378,12 +397,13 @@ async def restore_from_zip(
             return result
 
         sql_path = temp_dir / "database.sql"
-        if not sql_path.is_file():
+        if not await asyncio.to_thread(_path_is_file, sql_path):
             result.message = "❌ فایل `database.sql` در بکاپ پیدا نشد."
             result.errors.append("SQL file missing after extraction")
             return result
 
-        sql_size_mb = sql_path.stat().st_size / (1024 * 1024)
+        sql_size_bytes = await asyncio.to_thread(_path_stat_size, sql_path)
+        sql_size_mb = sql_size_bytes / (1024 * 1024)
         logger.info(
             "%s Restore: SQL file %.2f MB, crypto_key=%s",
             LogTag.JOB,
@@ -422,7 +442,7 @@ async def restore_from_zip(
 
                     # Also update WEBHOOK_SECRET if present (read from extracted .env)
                     backup_env_path = temp_dir / ".env"
-                    if backup_env_path.is_file():
+                    if await asyncio.to_thread(_path_is_file, backup_env_path):
                         backup_env_content = await asyncio.to_thread(
                             backup_env_path.read_text, encoding="utf-8"
                         )
@@ -435,11 +455,9 @@ async def restore_from_zip(
                 result.errors.append("Could not find .env to update CRYPTO_KEY")
 
         # Step 4: Dispose stale connection pool and reload secrets from DB
-        try:
+        with contextlib.suppress(Exception):
             from app.db.base import engine
             await engine.dispose()
-        except Exception:
-            pass  # Not fatal
 
         try:
             await ensure_secrets()
@@ -471,10 +489,8 @@ async def restore_from_zip(
     finally:
         # Release lock
         if redis and lock_acquired:
-            try:
+            with contextlib.suppress(Exception):
                 await redis.delete("pasarguardbot:restore_lock")
-            except Exception:
-                pass
         # Clean up temp dir
         if temp_dir:
             await asyncio.to_thread(shutil.rmtree, temp_dir, True)
