@@ -19,14 +19,16 @@ from config import ADMIN_ID
 
 logger = get_logger(__name__)
 
-_BACKUP_CALLBACKS = frozenset({
-    "backup_run_now",
-    "backup_set_interval",
-    "backup_menu",
-    "backup_restore_start",
-    "backup_restore_confirm",
-    "backup_restore_cancel",
-})
+_BACKUP_CALLBACKS = frozenset(
+    {
+        "backup_run_now",
+        "backup_set_interval",
+        "backup_menu",
+        "backup_restore_start",
+        "backup_restore_confirm",
+        "backup_restore_cancel",
+    }
+)
 
 
 def _backup_callback_filter(event: events.CallbackQuery.Event) -> bool:
