@@ -41,7 +41,9 @@ RESTORE_WORKING = "⏳ در حال ریستور دیتابیس... لطفاً ص�
 RESTORE_TOO_LARGE = "❌ فایل بکاپ خیلی بزرگ است (حداکثر 500 MB)."
 RESTORE_INVALID_FILE = "❌ فایل ارسالی معتبر نیست. لطفاً فایل ZIP بکاپ را ارسال کنید."
 
-RESTORE_SUCCESS_TEMPLATE = "✅ **ریستور با موفقیت انجام شد!**\n\n{details}\n\n⚠️ **لطفاً ربات را ری‌استارت کنید تا تغییرات اعمال شود.**"
+RESTORE_SUCCESS_TEMPLATE = (
+    "✅ **ریستور با موفقیت انجام شد!**\n\n{details}\n\n⚠️ **لطفاً ربات را ری‌استارت کنید تا تغییرات اعمال شود.**"
+)
 
 
 def menu_text(interval_hours: int, channel_configured: bool) -> str:
