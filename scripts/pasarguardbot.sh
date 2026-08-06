@@ -31,7 +31,7 @@ readonly COMPOSE_RAW_URL="https://raw.githubusercontent.com/Mohammad1724/Pasargu
 readonly ENV_EXAMPLE_RAW_URL="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${REPO_BRANCH}/.env.example"
 readonly REPO_GIT_URL="https://github.com/Mohammad1724/PasarguardBotMRM.git"
 readonly PHPMYADMIN_ARCHIVE_URL="https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.tar.gz"
-readonly BOT_IMAGE="ghcr.io/mohammad1724/pasarguardbotmrm"
+readonly BOT_IMAGE="ghcr.io/amirkenzo/pasarguardbot"
 readonly FASTAPI_PORT_DEFAULT=6160
 readonly REDIS_PORT=6161
 readonly MARIADB_PORT=6162
@@ -1216,7 +1216,7 @@ validate_compose_file() {
         err "Compose file is empty."
         return 1
     }
-    grep -qE 'ghcr\.io/mohammad1724/pasarguardbotmrm(:|\$\{)' "$file" || {
+    grep -qE 'ghcr.io/amirkenzo/pasarguardbot(:|\$\{)' "$file" || {
         err "Compose file missing required image ghcr.io/mohammad1724/pasarguardbotmrm"
         return 1
     }
