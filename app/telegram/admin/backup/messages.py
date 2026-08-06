@@ -71,9 +71,7 @@ async def _backup_message_filter(event: Message) -> bool:
     if msg == states.BACKUP_MENU_TRIGGER:
         return True
     step = await get_step(event.sender_id)
-    if step == states.SET_BACKUP_INTERVAL_STEP and bool(msg):
-        return True
-    return False
+    return step == states.SET_BACKUP_INTERVAL_STEP and bool(msg)
 
 
 async def _backup_document_filter(event: Message) -> bool:
@@ -133,7 +131,7 @@ async def message_handler_backup_document(event: Message):
             buttons=keyboards.restore_waiting_buttons(),
             parse_mode="md",
         )
-        raise events.StopPropagation
+        raise events.StopPropagation from None
 
     if not zip_path.is_file() or zip_path.stat().st_size == 0:
         _cleanup_restore_dir(event.sender_id)
