@@ -303,7 +303,9 @@ async def _import_sql(conn, sql_path: Path) -> None:
                     if not chunk:
                         break
                     process.stdin.write(chunk)
-        except (BrokenPipeError, ConnectionResetError):
+        except BrokenPipeError:
+            pass  # Process died; we'll catch the error from returncode
+        except ConnectionResetError:
             pass  # Process died; we'll catch the error from returncode
         finally:
             with contextlib.suppress(Exception):
