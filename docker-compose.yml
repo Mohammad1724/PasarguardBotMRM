@@ -67,7 +67,7 @@ services:
     env_file:
       - ${PASARGUARDBOT_CONFIG_DIR:-.}/.env
     volumes:
-      - ${PASARGUARDBOT_CONFIG_DIR:-.}/.env:/app/.env:ro
+      - ${PASARGUARDBOT_CONFIG_DIR:-.}/.env:/app/.env
       - ${PASARGUARDBOT_CONFIG_DIR:-.}/logs:/app/logs
       - ${PASARGUARDBOT_CONFIG_DIR:-.}/sessions:/app/sessions
     depends_on:
