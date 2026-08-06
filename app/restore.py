@@ -1,22 +1,39 @@
-"""Restore MariaDB from a backup ZIP (database.sql + .env)."""
+"""Restore MariaDB from a backup ZIP (database.sql + .env).
+
+Security measures:
+- Zip Slip protection via path validation on extraction
+- SQL injection prevention via identifier escaping
+- Distributed Redis lock to prevent concurrent restores
+- Streaming SQL import to avoid OOM on large files
+- Atomic .env file writes to prevent corruption on crash
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
 from app.db.crud.secrets import ensure_secrets
 from app.logger import LogTag, get_logger
-from config import SQLALCHEMY_DATABASE_URL
+from app.services.mysql_utils import (
+    build_mysql_cmd_args,
+    escape_mysql_identifier,
+    escape_mysql_string,
+    parse_mysql_url,
+)
 
 logger = get_logger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 @dataclass
 class RestoreResult:
@@ -27,83 +44,49 @@ class RestoreResult:
     errors: list[str] = field(default_factory=list)
 
 
-def _resolve_mysql_binary() -> str:
-    """Find the mariadb/mysql client binary."""
-    for name in ("mariadb", "mysql"):
-        path = shutil.which(name)
-        if path:
-            return path
-    for path in (
-        "/usr/bin/mariadb",
-        "/usr/bin/mysql",
-        "/usr/local/bin/mariadb",
-        "/usr/local/bin/mysql",
-    ):
-        if Path(path).is_file() and os.access(path, os.X_OK):
-            return path
-    raise FileNotFoundError(
-        "mariadb/mysql client not found. On native installs, install the mariadb-client package."
-    )
+# ---------------------------------------------------------------------------
+# .env file helpers (atomic writes)
+# ---------------------------------------------------------------------------
 
-
-def _default_native_socket() -> Path | None:
+def _find_env_file() -> Path | None:
+    """Find the active .env file path (prioritize config dir)."""
     config_dir = os.environ.get("PASARGUARDBOT_CONFIG_DIR", "/opt/pasarguardbot")
-    sock = Path(config_dir) / "data" / "mariadb" / "pasarguardbot.sock"
-    return sock if sock.is_socket() else None
-
-
-@dataclass(frozen=True)
-class MysqlConnection:
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
-
-
-def parse_mysql_url(database_url: str = SQLALCHEMY_DATABASE_URL) -> MysqlConnection:
-    parsed = urlparse(database_url)
-    scheme = (parsed.scheme or "").split("+", 1)[0].lower()
-    if scheme not in {"mysql", "mariadb"}:
-        raise ValueError("Restore is only supported for MariaDB/MySQL.")
-    if not parsed.hostname or not parsed.path or parsed.path == "/":
-        raise ValueError("Invalid database URL.")
-    return MysqlConnection(
-        host=parsed.hostname,
-        port=parsed.port or 3306,
-        user=unquote(parsed.username or ""),
-        password=unquote(parsed.password or ""),
-        database=unquote(parsed.path.lstrip("/")),
+    candidates = (
+        Path(config_dir) / ".env",            # Most reliable (native + Docker real path)
+        Path("/app/.env"),                     # Docker symlink target
+        Path(__file__).resolve().parents[2] / ".env",  # Project root
+        Path(".env"),                          # CWD fallback
     )
-
-
-def _extract_crypto_key_from_env(env_content: str) -> str | None:
-    """Extract CRYPTO_KEY value from .env file content."""
-    for line in env_content.splitlines():
-        line = line.strip()
-        if line.startswith("CRYPTO_KEY=") and not line.startswith("#"):
-            value = line.split("=", 1)[1].strip()
-            # Remove surrounding quotes if present
-            if value and value[0] in ('"', "'") and value[-1] == value[0]:
-                value = value[1:-1]
-            return value if value else None
+    for path in candidates:
+        if path.is_file():
+            return path
     return None
 
 
-def _extract_webhook_secret_from_env(env_content: str) -> str | None:
-    """Extract WEBHOOK_SECRET value from .env file content."""
-    for line in env_content.splitlines():
-        line = line.strip()
-        if line.startswith("WEBHOOK_SECRET=") and not line.startswith("#"):
-            value = line.split("=", 1)[1].strip()
-            if value and value[0] in ('"', "'") and value[-1] == value[0]:
-                value = value[1:-1]
-            return value if value else None
-    return None
+def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Write text to a file atomically (write to temp, then rename).
+
+    Prevents corruption if the process is killed mid-write.
+    """
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".env-")
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            fd = None  # os.fdopen takes ownership of fd
+            f.write(content)
+        os.replace(tmp_path, str(path))  # Atomic on POSIX
+        tmp_path = None  # Successfully replaced
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp_path is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
 
 
-def _update_env_crypto_key(env_path: Path, crypto_key: str) -> bool:
-    """Update CRYPTO_KEY in the current .env file."""
+def _update_env_var(env_path: Path, var_name: str, value: str) -> bool:
+    """Update or add a variable in the .env file (atomic write)."""
     if not env_path.is_file():
         logger.warning("%s .env file not found at %s", LogTag.JOB, env_path)
         return False
@@ -112,64 +95,71 @@ def _update_env_crypto_key(env_path: Path, crypto_key: str) -> bool:
     lines = content.splitlines()
     found = False
     new_lines = []
+    prefix = f"{var_name}="
 
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("CRYPTO_KEY=") and not stripped.startswith("#"):
-            new_lines.append(f"CRYPTO_KEY={crypto_key}")
+        if stripped.startswith(prefix) and not stripped.startswith("#"):
+            new_lines.append(f"{var_name}={value}")
             found = True
         else:
             new_lines.append(line)
 
     if not found:
-        new_lines.append(f"CRYPTO_KEY={crypto_key}")
+        new_lines.append(f"{var_name}={value}")
 
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    _atomic_write_text(env_path, "\n".join(new_lines) + "\n")
     return True
 
 
-def _update_env_webhook_secret(env_path: Path, webhook_secret: str) -> bool:
-    """Update WEBHOOK_SECRET in the current .env file."""
-    if not env_path.is_file():
-        return False
-
-    content = env_path.read_text(encoding="utf-8")
-    lines = content.splitlines()
-    found = False
-    new_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("WEBHOOK_SECRET=") and not stripped.startswith("#"):
-            new_lines.append(f"WEBHOOK_SECRET={webhook_secret}")
-            found = True
-        else:
-            new_lines.append(line)
-
-    if not found:
-        new_lines.append(f"WEBHOOK_SECRET={webhook_secret}")
-
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    return True
-
-
-def _find_env_file() -> Path | None:
-    """Find the active .env file path."""
-    config_dir = os.environ.get("PASARGUARDBOT_CONFIG_DIR", "/opt/pasarguardbot")
-    candidates = (
-        Path(".env"),
-        Path(__file__).resolve().parents[2] / ".env",
-        Path(config_dir) / ".env",
-        Path("/app/.env"),
-    )
-    for path in candidates:
-        if path.is_file():
-            return path
+def _extract_env_var(env_content: str, var_name: str) -> str | None:
+    """Extract a variable value from .env file content."""
+    prefix = f"{var_name}="
+    for line in env_content.splitlines():
+        line = line.strip()
+        if line.startswith(prefix) and not line.startswith("#"):
+            value = line.split("=", 1)[1].strip()
+            # Remove surrounding quotes if present
+            if value and len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+                value = value[1:-1]
+            return value if value else None
     return None
 
 
-async def validate_backup_zip(zip_path: Path) -> dict:
-    """Validate a backup ZIP and return its contents info."""
+# ---------------------------------------------------------------------------
+# Zip Slip protection
+# ---------------------------------------------------------------------------
+
+def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Extract ZIP entries only if they don't escape the destination directory.
+
+    Prevents Zip Slip / path traversal attacks via crafted ZIP files.
+    Note: Python's zipfile.extractall does NOT create symlinks — symlink entries
+    in ZIPs are extracted as regular files containing the symlink target path.
+    """
+    dest_resolved = dest.resolve()
+    for member in zf.namelist():
+        # Skip directory entries and the root marker
+        if not member or member in (".", "/"):
+            continue
+        # Resolve the target path for this entry
+        member_path = (dest / member).resolve()
+        # Ensure it's strictly within the destination directory
+        try:
+            member_path.relative_to(dest_resolved)
+        except ValueError as err:
+            raise ValueError(
+                f"Zip entry attempts path traversal: {member!r}"
+            ) from None
+    zf.extractall(dest)
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers (called via asyncio.to_thread from async context)
+# ---------------------------------------------------------------------------
+
+def _validate_zip_sync(zip_path: Path) -> dict:
+    """Synchronous ZIP validation — called via asyncio.to_thread."""
     info: dict = {
         "has_sql": False,
         "has_env": False,
@@ -192,39 +182,39 @@ async def validate_backup_zip(zip_path: Path) -> dict:
             if ".env" in names:
                 info["has_env"] = True
                 env_content = zf.read(".env").decode("utf-8", errors="replace")
-                info["crypto_key"] = _extract_crypto_key_from_env(env_content)
-    except (zipfile.BadZipFile, Exception) as exc:
+                info["crypto_key"] = _extract_env_var(env_content, "CRYPTO_KEY")
+    except (zipfile.BadZipFile, KeyError, OSError) as exc:
         logger.error("%s Invalid backup ZIP: %s", LogTag.JOB, exc)
 
     return info
 
 
-async def _drop_all_tables(conn: MysqlConnection) -> int:
+async def validate_backup_zip(zip_path: Path) -> dict:
+    """Validate a backup ZIP and return its contents info."""
+    return await asyncio.to_thread(_validate_zip_sync, zip_path)
+
+
+# ---------------------------------------------------------------------------
+# Database operations
+# ---------------------------------------------------------------------------
+
+async def _drop_all_tables(conn) -> int:
     """Drop all tables and views in the database. Returns count of dropped objects."""
-    mysql_bin = _resolve_mysql_binary()
+    # Use escaped database name in SQL to prevent injection
+    safe_db = escape_mysql_string(conn.database)
 
-    # First, get list of tables and views
-    list_cmd = [
-        mysql_bin,
-        f"--user={conn.user}",
-        "--batch",
-        "--skip-column-names",
-        "-e",
-        (
-            f"SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
-            f"WHERE TABLE_SCHEMA='{conn.database}';"
-        ),
-    ]
-
-    socket_path = _default_native_socket()
-    if socket_path is not None and conn.host in {"127.0.0.1", "localhost"}:
-        list_cmd.append(f"--socket={socket_path}")
-    else:
-        list_cmd.extend([f"--host={conn.host}", f"--port={conn.port}"])
-
-    env = os.environ.copy()
-    if conn.password:
-        env["MYSQL_PWD"] = conn.password
+    list_cmd, env = build_mysql_cmd_args(
+        conn,
+        extra_args=[
+            "--batch",
+            "--skip-column-names",
+            "-e",
+            (
+                f"SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
+                f"WHERE TABLE_SCHEMA='{safe_db}';"
+            ),
+        ],
+    )
 
     process = await asyncio.create_subprocess_exec(
         *list_cmd,
@@ -256,30 +246,23 @@ async def _drop_all_tables(conn: MysqlConnection) -> int:
     drop_statements = "SET FOREIGN_KEY_CHECKS=0;\n"
     # Drop views first (they may reference tables)
     for view in views:
-        drop_statements += f"DROP VIEW IF EXISTS `{view}`;\n"
+        safe_view = escape_mysql_identifier(view)
+        drop_statements += f"DROP VIEW IF EXISTS `{safe_view}`;\n"
     for table in tables:
-        drop_statements += f"DROP TABLE IF EXISTS `{table}`;\n"
+        safe_table = escape_mysql_identifier(table)
+        drop_statements += f"DROP TABLE IF EXISTS `{safe_table}`;\n"
     drop_statements += "SET FOREIGN_KEY_CHECKS=1;\n"
 
-    drop_cmd = [
-        mysql_bin,
-        f"--user={conn.user}",
-        conn.database,
-    ]
-
-    if socket_path is not None and conn.host in {"127.0.0.1", "localhost"}:
-        drop_cmd.append(f"--socket={socket_path}")
-    else:
-        drop_cmd.extend([f"--host={conn.host}", f"--port={conn.port}"])
+    drop_cmd, drop_env = build_mysql_cmd_args(conn, include_database=True)
 
     process = await asyncio.create_subprocess_exec(
         *drop_cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env=env,
+        env=drop_env,
     )
-    stdout, stderr = await process.communicate(input=drop_statements.encode("utf-8"))
+    _, stderr = await process.communicate(input=drop_statements.encode("utf-8"))
 
     if process.returncode != 0:
         err = (stderr or b"").decode("utf-8", errors="replace").strip()
@@ -288,45 +271,76 @@ async def _drop_all_tables(conn: MysqlConnection) -> int:
     return len(tables) + len(views)
 
 
-async def _import_sql(conn: MysqlConnection, sql_path: Path) -> None:
-    """Import SQL file into the database."""
-    mysql_bin = _resolve_mysql_binary()
+def _read_sql_chunk(f, size: int) -> bytes:
+    """Read a chunk from file — called via asyncio.to_thread."""
+    return f.read(size)
 
-    cmd = [
-        mysql_bin,
-        f"--user={conn.user}",
-        "--max-allowed-packet=256M",
-    ]
 
-    socket_path = _default_native_socket()
-    if socket_path is not None and conn.host in {"127.0.0.1", "localhost"}:
-        cmd.append(f"--socket={socket_path}")
-    else:
-        cmd.extend([f"--host={conn.host}", f"--port={conn.port}"])
+async def _import_sql(conn, sql_path: Path) -> None:
+    """Import SQL file into the database using streaming to avoid OOM.
 
-    # The SQL dump uses CREATE DATABASE, so we don't need to specify database
-    # But we add it for safety
-    cmd.append(conn.database)
-
-    env = os.environ.copy()
-    if conn.password:
-        env["MYSQL_PWD"] = conn.password
-
-    sql_content = await asyncio.to_thread(sql_path.read_bytes)
+    Uses stdout=DEVNULL to prevent pipe-buffer deadlock: if stdout were PIPE,
+    the mysql process could block writing to a full stdout pipe while we're
+    blocked writing to stdin, causing a deadlock.
+    """
+    cmd, env = build_mysql_cmd_args(
+        conn,
+        include_database=True,
+        extra_args=["--max-allowed-packet=256M"],
+    )
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
-    stdout, stderr = await process.communicate(input=sql_content)
+
+    # Stream file in 1MB chunks and drain stderr concurrently to avoid deadlock.
+    async def _stream_file():
+        assert process.stdin is not None
+        try:
+            loop = asyncio.get_running_loop()
+            with open(sql_path, "rb") as f:  # noqa: ASYNC230
+                while True:
+                    chunk = await loop.run_in_executor(None, f.read, 1024 * 1024)
+                    if not chunk:
+                        break
+                    process.stdin.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Process died; we'll catch the error from returncode
+        finally:
+            with contextlib.suppress(Exception):
+                process.stdin.close()
+
+    async def _drain_stderr():
+        assert process.stderr is not None
+        return await process.stderr.read()
+
+    _, stderr_bytes = await asyncio.gather(_stream_file(), _drain_stderr())
+    await process.wait()
 
     if process.returncode != 0:
-        err = (stderr or b"").decode("utf-8", errors="replace").strip()
+        err = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"SQL import failed: {err}")
 
+
+# ---------------------------------------------------------------------------
+# Sync file helpers (called via asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+def _path_is_file(path: Path) -> bool:
+    return path.is_file()
+
+
+def _path_stat_size(path: Path) -> int:
+    return path.stat().st_size
+
+
+# ---------------------------------------------------------------------------
+# Main restore function
+# ---------------------------------------------------------------------------
 
 async def restore_from_zip(
     zip_path: Path,
@@ -338,15 +352,30 @@ async def restore_from_zip(
     Restore the database from a backup ZIP file.
 
     Steps:
-    1. Extract ZIP to temp directory
-    2. Validate database.sql exists
-    3. Drop all existing tables (if requested)
-    4. Import SQL dump
-    5. Update CRYPTO_KEY in .env (if found in backup)
-    6. Reload secrets from DB
+    1. Acquire distributed lock (prevent concurrent restores)
+    2. Extract ZIP to temp directory (with Zip Slip protection)
+    3. Validate database.sql exists
+    4. Drop all existing tables (if requested)
+    5. Import SQL dump (streamed to avoid OOM)
+    6. Update CRYPTO_KEY in .env (atomic write)
+    7. Reload secrets from DB
     """
     result = RestoreResult(ok=False, message="")
     temp_dir = None
+    lock_acquired = False
+    redis = None
+
+    # ── Step 0: Distributed lock ──
+    from app.db.redis import get_redis
+    redis = await get_redis()
+    if redis:
+        lock_acquired = bool(await redis.set("pasarguardbot:restore_lock", "1", nx=True, ex=600))
+        if not lock_acquired:
+            return RestoreResult(
+                ok=False,
+                message="❌ عملیات ریستور دیگری در حال انجام است. لطفاً صبر کنید.",
+                errors=["Another restore is in progress (Redis lock active)"],
+            )
 
     try:
         # Validate ZIP
@@ -357,18 +386,24 @@ async def restore_from_zip(
             result.errors.append("Missing database.sql in ZIP")
             return result
 
-        # Extract ZIP
+        # Extract ZIP (with Zip Slip protection)
         temp_dir = Path(await asyncio.to_thread(tempfile.mkdtemp, "pasarguardbot-restore-"))
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(temp_dir)
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                await asyncio.to_thread(_safe_extractall, zf, temp_dir)
+        except ValueError as exc:
+            result.message = f"❌ فایل بکاپ حاوی مسیر نامعتبر است: {exc}"
+            result.errors.append(f"Zip Slip detected: {exc}")
+            return result
 
         sql_path = temp_dir / "database.sql"
-        if not sql_path.is_file():
+        if not await asyncio.to_thread(_path_is_file, sql_path):
             result.message = "❌ فایل `database.sql` در بکاپ پیدا نشد."
             result.errors.append("SQL file missing after extraction")
             return result
 
-        sql_size_mb = sql_path.stat().st_size / (1024 * 1024)
+        sql_size_bytes = await asyncio.to_thread(_path_stat_size, sql_path)
+        sql_size_mb = sql_size_bytes / (1024 * 1024)
         logger.info(
             "%s Restore: SQL file %.2f MB, crypto_key=%s",
             LogTag.JOB,
@@ -382,13 +417,13 @@ async def restore_from_zip(
         if drop_existing:
             try:
                 dropped = await _drop_all_tables(conn)
-                logger.info("%s Restore: dropped %d existing tables", LogTag.JOB, dropped)
+                logger.info("%s Restore: dropped %d existing tables/views", LogTag.JOB, dropped)
             except Exception as exc:
                 result.message = f"❌ حذف جدول‌های قبلی ناموفق بود: {exc}"
                 result.errors.append(f"Drop tables failed: {exc}")
                 return result
 
-        # Step 2: Import SQL
+        # Step 2: Import SQL (streamed)
         try:
             await _import_sql(conn, sql_path)
             logger.info("%s Restore: SQL import completed", LogTag.JOB)
@@ -397,27 +432,33 @@ async def restore_from_zip(
             result.errors.append(f"SQL import failed: {exc}")
             return result
 
-        # Step 3: Update CRYPTO_KEY in .env
+        # Step 3: Update CRYPTO_KEY in .env (atomic write)
         if update_crypto_key and info["crypto_key"]:
             env_path = _find_env_file()
             if env_path:
-                if _update_env_crypto_key(env_path, info["crypto_key"]):
+                if _update_env_var(env_path, "CRYPTO_KEY", info["crypto_key"]):
                     result.crypto_key_restored = True
                     logger.info("%s Restore: CRYPTO_KEY updated in .env", LogTag.JOB)
 
                     # Also update WEBHOOK_SECRET if present (read from extracted .env)
                     backup_env_path = temp_dir / ".env"
-                    if backup_env_path.is_file():
-                        backup_env_content = await asyncio.to_thread(backup_env_path.read_text, encoding="utf-8")
-                        webhook_secret = _extract_webhook_secret_from_env(backup_env_content)
+                    if await asyncio.to_thread(_path_is_file, backup_env_path):
+                        backup_env_content = await asyncio.to_thread(
+                            backup_env_path.read_text, encoding="utf-8"
+                        )
+                        webhook_secret = _extract_env_var(backup_env_content, "WEBHOOK_SECRET")
                         if webhook_secret:
-                            _update_env_webhook_secret(env_path, webhook_secret)
+                            _update_env_var(env_path, "WEBHOOK_SECRET", webhook_secret)
                             logger.info("%s Restore: WEBHOOK_SECRET updated in .env", LogTag.JOB)
             else:
                 logger.warning("%s Restore: .env not found, CRYPTO_KEY not updated", LogTag.JOB)
                 result.errors.append("Could not find .env to update CRYPTO_KEY")
 
-        # Step 4: Try to reload secrets from DB (if the secrets table exists in the restored data)
+        # Step 4: Dispose stale connection pool and reload secrets from DB
+        with contextlib.suppress(Exception):
+            from app.db.base import engine
+            await engine.dispose()
+
         try:
             await ensure_secrets()
             logger.info("%s Restore: secrets reloaded from database", LogTag.JOB)
@@ -426,7 +467,6 @@ async def restore_from_zip(
             # Not fatal — secrets will be reloaded on next restart
 
         result.ok = True
-        sql_size_mb = sql_path.stat().st_size / (1024 * 1024)
         crypto_msg = (
             "🔑 `CRYPTO_KEY` از بکاپ بازیابی و در `.env` جایگزین شد."
             if result.crypto_key_restored
@@ -447,5 +487,10 @@ async def restore_from_zip(
         return result
 
     finally:
+        # Release lock
+        if redis and lock_acquired:
+            with contextlib.suppress(Exception):
+                await redis.delete("pasarguardbot:restore_lock")
+        # Clean up temp dir
         if temp_dir:
             await asyncio.to_thread(shutil.rmtree, temp_dir, True)
