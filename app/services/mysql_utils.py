@@ -56,9 +56,7 @@ def resolve_mysql_client_binary() -> str:
     ):
         if Path(path).is_file() and os.access(path, os.X_OK):
             return path
-    raise FileNotFoundError(
-        "mariadb/mysql client not found. On native installs, install the mariadb-client package."
-    )
+    raise FileNotFoundError("mariadb/mysql client not found. On native installs, install the mariadb-client package.")
 
 
 def default_native_socket() -> Path | None:
