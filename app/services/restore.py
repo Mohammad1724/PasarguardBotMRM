@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RestoreResult:
     ok: bool
@@ -48,14 +49,15 @@ class RestoreResult:
 # .env file helpers (atomic writes)
 # ---------------------------------------------------------------------------
 
+
 def _find_env_file() -> Path | None:
     """Find the active .env file path (prioritize config dir)."""
     config_dir = os.environ.get("PASARGUARDBOT_CONFIG_DIR", "/opt/pasarguardbot")
     candidates = (
-        Path(config_dir) / ".env",            # Most reliable (native + Docker real path)
-        Path("/app/.env"),                     # Docker symlink target
+        Path(config_dir) / ".env",  # Most reliable (native + Docker real path)
+        Path("/app/.env"),  # Docker symlink target
         Path(__file__).resolve().parents[2] / ".env",  # Project root
-        Path(".env"),                          # CWD fallback
+        Path(".env"),  # CWD fallback
     )
     for path in candidates:
         if path.is_file():
@@ -130,6 +132,7 @@ def _extract_env_var(env_content: str, var_name: str) -> str | None:
 # Zip Slip protection
 # ---------------------------------------------------------------------------
 
+
 def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
     """Extract ZIP entries only if they don't escape the destination directory.
 
@@ -148,15 +151,14 @@ def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
         try:
             member_path.relative_to(dest_resolved)
         except ValueError:
-            raise ValueError(
-                f"Zip entry attempts path traversal: {member!r}"
-            ) from None
+            raise ValueError(f"Zip entry attempts path traversal: {member!r}") from None
     zf.extractall(dest)
 
 
 # ---------------------------------------------------------------------------
 # Sync helpers (called via asyncio.to_thread from async context)
 # ---------------------------------------------------------------------------
+
 
 def _validate_zip_sync(zip_path: Path) -> dict:
     """Synchronous ZIP validation — called via asyncio.to_thread."""
@@ -198,6 +200,7 @@ async def validate_backup_zip(zip_path: Path) -> dict:
 # Database operations
 # ---------------------------------------------------------------------------
 
+
 async def _drop_all_tables(conn) -> int:
     """Drop all tables and views in the database. Returns count of dropped objects."""
     # Use escaped database name in SQL to prevent injection
@@ -209,10 +212,7 @@ async def _drop_all_tables(conn) -> int:
             "--batch",
             "--skip-column-names",
             "-e",
-            (
-                f"SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
-                f"WHERE TABLE_SCHEMA='{safe_db}';"
-            ),
+            (f"SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA='{safe_db}';"),
         ],
     )
 
@@ -271,11 +271,6 @@ async def _drop_all_tables(conn) -> int:
     return len(tables) + len(views)
 
 
-def _read_sql_chunk(f, size: int) -> bytes:
-    """Read a chunk from file — called via asyncio.to_thread."""
-    return f.read(size)
-
-
 async def _import_sql(conn, sql_path: Path) -> None:
     """Import SQL file into the database using streaming to avoid OOM.
 
@@ -330,6 +325,7 @@ async def _import_sql(conn, sql_path: Path) -> None:
 # Sync file helpers (called via asyncio.to_thread)
 # ---------------------------------------------------------------------------
 
+
 def _path_is_file(path: Path) -> bool:
     return path.is_file()
 
@@ -342,24 +338,14 @@ def _path_stat_size(path: Path) -> int:
 # Main restore function
 # ---------------------------------------------------------------------------
 
+
 async def restore_from_zip(
     zip_path: Path,
     *,
     drop_existing: bool = True,
     update_crypto_key: bool = True,
 ) -> RestoreResult:
-    """
-    Restore the database from a backup ZIP file.
-
-    Steps:
-    1. Acquire distributed lock (prevent concurrent restores)
-    2. Extract ZIP to temp directory (with Zip Slip protection)
-    3. Validate database.sql exists
-    4. Drop all existing tables (if requested)
-    5. Import SQL dump (streamed to avoid OOM)
-    6. Update CRYPTO_KEY in .env (atomic write)
-    7. Reload secrets from DB
-    """
+    """Restore the database from a backup ZIP file."""
     result = RestoreResult(ok=False, message="")
     temp_dir = None
     lock_acquired = False
@@ -367,6 +353,7 @@ async def restore_from_zip(
 
     # ── Step 0: Distributed lock ──
     from app.db.redis import get_redis
+
     redis = await get_redis()
     if redis:
         lock_acquired = bool(await redis.set("pasarguardbot:restore_lock", "1", nx=True, ex=600))
@@ -443,9 +430,7 @@ async def restore_from_zip(
                     # Also update WEBHOOK_SECRET if present (read from extracted .env)
                     backup_env_path = temp_dir / ".env"
                     if await asyncio.to_thread(_path_is_file, backup_env_path):
-                        backup_env_content = await asyncio.to_thread(
-                            backup_env_path.read_text, encoding="utf-8"
-                        )
+                        backup_env_content = await asyncio.to_thread(backup_env_path.read_text, encoding="utf-8")
                         webhook_secret = _extract_env_var(backup_env_content, "WEBHOOK_SECRET")
                         if webhook_secret:
                             _update_env_var(env_path, "WEBHOOK_SECRET", webhook_secret)
@@ -457,6 +442,7 @@ async def restore_from_zip(
         # Step 4: Dispose stale connection pool and reload secrets from DB
         with contextlib.suppress(Exception):
             from app.db.base import engine
+
             await engine.dispose()
 
         try:
