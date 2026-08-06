@@ -147,7 +147,7 @@ def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
         # Ensure it's strictly within the destination directory
         try:
             member_path.relative_to(dest_resolved)
-        except ValueError as err:
+        except ValueError:
             raise ValueError(
                 f"Zip entry attempts path traversal: {member!r}"
             ) from None
