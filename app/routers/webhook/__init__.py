@@ -17,13 +17,15 @@ logger = get_logger(__name__)
 webhook_router = APIRouter()
 
 # Headers that must never appear in logs (even at DEBUG level).
-_SENSITIVE_HEADER_NAMES = frozenset({
-    "x-webhook-secret",
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "x-api-key",
-})
+_SENSITIVE_HEADER_NAMES = frozenset(
+    {
+        "x-webhook-secret",
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+    }
+)
 
 
 @webhook_router.post("/webhook", response_model=WebhookResponse)
