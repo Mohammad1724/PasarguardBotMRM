@@ -11,6 +11,7 @@ from pasarguard.enums import UserDataLimitResetStrategy
 from app.db.crud.services import ServiceCRUD
 from app.db.crud.user import debit_Money_if_sufficient, update_Money
 from app.logger import get_logger
+from app.services.auto_renew.guards import service_argument_guard
 from app.services.panels.settings import panel_renew_volume_remaining_mode
 from app.utils.formatting.conversions import day_to_timestamp, gigabytes_to_bytes
 
@@ -127,6 +128,7 @@ async def apply_panel_user_renewal(
     return new_hajm
 
 
+@service_argument_guard
 async def execute_paid_service_renewal(
     service: Any,
     panel: Any,
@@ -145,6 +147,8 @@ async def execute_paid_service_renewal(
     api = PasarguardAPI(panel.base_url)
     panel_userid = require_panel_userid(service)
 
+    # Fetch within the shared write lock; a caller's earlier panel snapshot may be stale.
+    panel_user = await fetch_panel_user(api, panel, service)
     new_balance = await debit_Money_if_sufficient(user_id=user_id, amount=int(price))
     if new_balance is None:
         raise PaidRenewalError("موجودی کیف پول کافی نیست یا کاربر برای کسر موجودی یافت نشد")

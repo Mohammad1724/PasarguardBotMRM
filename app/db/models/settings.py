@@ -27,6 +27,7 @@ DEFAULT_CORE_SETTINGS: dict[str, Any] = {
     "cx_conversion_enabled": False,
     "cx_followup_enabled": False,
     "cx_support_ids": [],
+    "auto_renew_enabled": False,
     **DEFAULT_HOME_MENU_SETTINGS,
 }
 

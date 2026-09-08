@@ -2,15 +2,15 @@
 
 import asyncio
 import time
-from datetime import datetime
 from typing import Any
 
-from pasarguard import BulkUser, PasarguardAPI, PermissionScope, UserModify
+from pasarguard import PasarguardAPI, PermissionScope, UserModify
 from telethon import events
 
 from app.db.crud.panels import PanelsManager
 from app.db.crud.services import ServiceCRUD
 from app.logger import LogType, get_logger
+from app.services.auto_renew.locking import manual_write
 from app.services.billing.renewal import require_panel_userid
 from app.telegram.admin.bulk_increase import keyboards, states, texts
 from app.telegram.keyboards.admin import Panel_Admin_Buttons
@@ -212,98 +212,7 @@ async def _process_panel_with_bulk(
     state: dict,
     issues: list[str],
 ) -> None:
-    panel_label = texts.panel_label(panel)
-    state["current_panel"] = f"{panel_label} (bulk)"
-    admin_id = strategy.get("admin_id")
-    if admin_id is None:
-        texts.remember_issue(issues, f"{panel_label}: شناسه ادمین برای bulk موجود نیست؛ ادامه با حالت معمولی.")
-        await _process_panel_manually(event, panel, services, volume_bytes, time_days, state, issues)
-        return
-
-    valid_services, skipped = _bulk_trackable_services(services, issues, panel_label)
-    state["skipped"] += skipped
-
-    if not valid_services:
-        await _maybe_update_progress(event, state, issues, force=True)
-        return
-
-    expire_seconds = time_days * 86400 if time_days else 0
-    api = PasarguardAPI(base_url=panel.base_url)
-    try:
-        if volume_bytes:
-            await api.bulk_modify_users_datalimit(
-                BulkUser(dry_run=True, admins=[admin_id], amount=volume_bytes),
-                token=panel.cookie,
-            )
-        if expire_seconds:
-            await api.bulk_modify_users_expire(
-                BulkUser(dry_run=True, admins=[admin_id], amount=expire_seconds),
-                token=panel.cookie,
-            )
-    except Exception as exc:
-        texts.remember_issue(
-            issues,
-            f"{panel_label}: dry-run bulk رد شد؛ ادامه با حالت معمولی - {_exception_detail(exc)}",
-        )
-        logger.warning("Bulk dry-run failed for panel %s, falling back to manual: %s", panel.code, exc)
-        await api.close()
-        await _process_panel_manually(event, panel, valid_services, volume_bytes, time_days, state, issues)
-        return
-
-    try:
-        if volume_bytes:
-            await api.bulk_modify_users_datalimit(
-                BulkUser(admins=[admin_id], amount=volume_bytes),
-                token=panel.cookie,
-            )
-        if expire_seconds:
-            await api.bulk_modify_users_expire(
-                BulkUser(admins=[admin_id], amount=expire_seconds),
-                token=panel.cookie,
-            )
-    except Exception as exc:
-        failed = len(valid_services)
-        state["failed"] += failed
-        state["processed"] += failed
-        texts.remember_issue(issues, f"{panel_label}: خطای bulk - {_exception_detail(exc)}")
-        logger.error("Bulk increase failed for panel %s: %s", panel.code, exc)
-        await _maybe_update_progress(event, state, issues, force=True)
-        return
-    finally:
-        await api.close()
-
-    now_ts = int(datetime.now().timestamp())
-    updates = []
-    volume_delta = 0
-    for service in valid_services:
-        fields = {}
-        if volume_bytes:
-            current_package_size = int(service.package_size or 0)
-            next_package_size = max(0, current_package_size + volume_bytes)
-            fields["package_size"] = next_package_size
-            volume_delta += next_package_size - current_package_size
-        if expire_seconds:
-            current_expire = texts.timestamp_or_none(service.expiration_time) or now_ts
-            fields["expiration_time"] = current_expire + expire_seconds
-        if fields:
-            updates.append((service.code, fields))
-
-    matched, updated = await ServiceCRUD().bulk_update_services(updates)
-    if updated != len(updates):
-        texts.remember_issue(
-            issues,
-            f"{panel_label}: bulk پنل موفق بود اما DB کامل آپدیت نشد ({updated}/{len(updates)}، matched={matched}).",
-        )
-
-    success = len(valid_services)
-    state["success"] += success
-    state["processed"] += success
-    if volume_bytes:
-        state["total_volume_added"] += volume_delta
-    if time_days:
-        state["total_time_added"] += time_days * success
-    state["affected_users"].update(service.id for service in valid_services if service.id)
-    await _maybe_update_progress(event, state, issues, force=True)
+    await _process_panel_manually(event, panel, services, volume_bytes, time_days, state, issues)
 
 
 async def _process_panel_manually(
@@ -333,49 +242,54 @@ async def _process_panel_manually(
                 continue
 
             try:
-                panel_userid = require_panel_userid(service)
-                current_user = await api.get_user_by_id(user_id=panel_userid, token=panel.cookie)
-                current_data_limit = int(current_user.data_limit) if current_user.data_limit else 0
-                current_expire = texts.timestamp_or_none(current_user.expire)
-                if current_user.expire and current_expire is None:
-                    texts.remember_issue(
-                        issues,
-                        f"{panel_label} / {service.username}: expire قابل تبدیل نبود: {current_user.expire}",
+                async with manual_write(service.code):
+                    panel_userid = require_panel_userid(service)
+                    current_user = await api.get_user_by_id(user_id=panel_userid, token=panel.cookie)
+                    current_data_limit = int(current_user.data_limit) if current_user.data_limit else 0
+                    current_expire = texts.timestamp_or_none(current_user.expire)
+                    if current_user.expire and current_expire is None:
+                        texts.remember_issue(
+                            issues,
+                            f"{panel_label} / {service.username}: expire قابل تبدیل نبود: {current_user.expire}",
+                        )
+
+                    new_data_limit = max(0, current_data_limit + volume_bytes) if volume_bytes else None
+                    volume_delta = (new_data_limit - current_data_limit) if new_data_limit is not None else 0
+                    new_expire = None
+                    if time_days:
+                        new_expire = (
+                            current_expire + (time_days * 86400) if current_expire else day_to_timestamp(time_days)
+                        )
+
+                    await api.modify_user_by_id(
+                        user_id=panel_userid,
+                        user=UserModify(data_limit=new_data_limit, expire=new_expire),
+                        token=panel.cookie,
                     )
 
-                new_data_limit = max(0, current_data_limit + volume_bytes) if volume_bytes else None
-                volume_delta = (new_data_limit - current_data_limit) if new_data_limit is not None else 0
-                new_expire = None
-                if time_days:
-                    new_expire = current_expire + (time_days * 86400) if current_expire else day_to_timestamp(time_days)
+                    db_fields = {}
+                    if new_data_limit is not None:
+                        db_fields["package_size"] = new_data_limit
+                    if new_expire is not None:
+                        db_fields["expiration_time"] = new_expire
 
-                await api.modify_user_by_id(
-                    user_id=panel_userid,
-                    user=UserModify(data_limit=new_data_limit, expire=new_expire),
-                    token=panel.cookie,
-                )
+                    update_result = await ServiceCRUD().update_service(code=service.code, **db_fields)
+                    if isinstance(update_result, tuple) and not update_result[0]:
+                        texts.remember_issue(
+                            issues, f"{panel_label} / {service.username}: خطای DB - {update_result[1]}"
+                        )
+                        logger.warning("Failed to update service %s in database: %s", service.code, update_result[1])
 
-                db_fields = {}
-                if new_data_limit is not None:
-                    db_fields["package_size"] = new_data_limit
-                if new_expire is not None:
-                    db_fields["expiration_time"] = new_expire
+                    state["success"] += 1
+                    state["processed"] += 1
+                    if volume_bytes:
+                        state["total_volume_added"] += volume_delta
+                    if time_days:
+                        state["total_time_added"] += time_days
+                    if service.id:
+                        state["affected_users"].add(service.id)
 
-                update_result = await ServiceCRUD().update_service(code=service.code, **db_fields)
-                if isinstance(update_result, tuple) and not update_result[0]:
-                    texts.remember_issue(issues, f"{panel_label} / {service.username}: خطای DB - {update_result[1]}")
-                    logger.warning("Failed to update service %s in database: %s", service.code, update_result[1])
-
-                state["success"] += 1
-                state["processed"] += 1
-                if volume_bytes:
-                    state["total_volume_added"] += volume_delta
-                if time_days:
-                    state["total_time_added"] += time_days
-                if service.id:
-                    state["affected_users"].add(service.id)
-
-                await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.1)
             except Exception as exc:
                 state["failed"] += 1
                 state["processed"] += 1

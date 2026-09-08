@@ -1,5 +1,6 @@
 from . import (
     app_files,
+    auto_renew,
     bot_text,
     broadcast,
     channels,
@@ -29,6 +30,7 @@ from . import (
 
 __all__ = [
     "app_files",
+    "auto_renew",
     "bot_text",
     "broadcast",
     "channels",

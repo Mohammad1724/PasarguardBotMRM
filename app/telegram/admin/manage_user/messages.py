@@ -14,6 +14,7 @@ from app.db.crud.reseller_accounts import ResellerAccountCRUD
 from app.db.crud.services import ServiceCRUD, get_user_services_paginated
 from app.db.crud.user import UserCRUD
 from app.logger import get_logger
+from app.services.auto_renew.guards import telegram_write_guard
 from app.services.billing.renewal import require_panel_userid
 from app.services.reseller.usage_cap import parse_usage_cap_gb, set_reseller_usage_cap
 from app.telegram.admin.manage_user.service import build_service_text, finalize_admin_config
@@ -29,6 +30,7 @@ from config import ADMIN_ID
 logger = get_logger(__name__)
 
 
+@telegram_write_guard
 async def msg_manage_user_admin(event: Message):
     msg = event.message.text
 

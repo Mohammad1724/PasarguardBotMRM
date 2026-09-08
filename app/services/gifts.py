@@ -20,6 +20,7 @@ from app.db.crud.services import ServiceCRUD
 from app.db.models.gift_codes import GiftCode, GiftCodeUse
 from app.db.models.transaction import Transaction
 from app.db.models.user import User
+from app.services.auto_renew.guards import service_argument_guard
 from app.services.billing.renewal import require_panel_userid
 from app.services.panels.auth import create_panel_api, panel_uses_api_key, refresh_panel_cookie
 
@@ -171,6 +172,7 @@ async def panel_call(panel, method: str, **kwargs):
         return await getattr(create_panel_api(panel), method)(**kwargs)
 
 
+@service_argument_guard
 async def apply_service_gift(gift, service, panel, user_id: int, request_id: str):
     from app.services.locks import distributed_lock
 

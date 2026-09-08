@@ -75,6 +75,7 @@ jobs:
       - name: Customer experience migration and real backup roundtrip
         env:
           CX_MIGRATION_TEST_URL: mysql+asyncmy://root:local-ci-only@127.0.0.1:3306/cx_migration_test
+          AR_MIGRATION_TEST_URL: mysql+asyncmy://root:local-ci-only@127.0.0.1:3306/ar_migration_test
           TEST_REDIS_URL: redis://127.0.0.1:6379
         run: |
           uv run --no-sync python - <<'PY'
@@ -84,7 +85,9 @@ jobs:
               conn = await asyncmy.connect(host="127.0.0.1", port=3306, user="root", password="local-ci-only")
               async with conn.cursor() as cursor:
                   await cursor.execute("CREATE DATABASE cx_migration_test CHARACTER SET utf8mb4")
+                  await cursor.execute("CREATE DATABASE ar_migration_test CHARACTER SET utf8mb4")
               conn.close()
           asyncio.run(prepare())
           PY
           uv run --no-sync python tests/integration/customer_experience_roundtrip.py
+          uv run --no-sync python tests/integration/wallet_auto_renew_roundtrip.py

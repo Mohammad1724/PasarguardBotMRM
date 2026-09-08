@@ -15,6 +15,7 @@ from app.db.crud.services import ServiceCRUD
 from app.db.crud.settings import SettingsManager
 from app.db.crud.user import UserCRUD, safe_mode_admin_label, user_safe_mode_value
 from app.logger import LogType, get_logger
+from app.services.auto_renew.guards import telegram_write_guard
 from app.services.billing.renewal import require_panel_userid
 from app.services.billing.reseller_renewal import renew_reseller_account
 from app.services.panels.admins import get_reseller_admin, get_reseller_admin_user_count, reset_reseller_admin_password
@@ -353,6 +354,7 @@ def is_manage_user_service_callback(data: str) -> bool:
     return any(data.startswith(prefix) for prefix in states.MANAGE_USER_SERVICE_CALLBACK_PREFIXES)
 
 
+@telegram_write_guard
 async def handle_manage_user_service_callbacks(event: events.CallbackQuery.Event, data: str) -> None:
     if data.startswith("DeleteServiceAdmin:"):
         parts = data.split(":")
@@ -724,6 +726,7 @@ async def handle_manage_user_service_callbacks(event: events.CallbackQuery.Event
         await finalize_admin_config(event, username)
 
 
+@telegram_write_guard
 async def callback_manage_user_admin(event: events.CallbackQuery.Event):
     data = event.data.decode("UTF-8")
     if await handle_admin_reseller_callbacks(event, data):

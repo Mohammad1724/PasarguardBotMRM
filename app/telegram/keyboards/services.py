@@ -160,6 +160,18 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
         from app.telegram.user.customer_experience.handlers import service_button_rows
 
         active_button_rows.extend(await service_button_rows(services, settings))
+        if not is_test_service:
+            from app.db.base import AsyncSessionLocal
+            from app.db.models.auto_renew import AutoRenewPolicy
+
+            async with AsyncSessionLocal() as session:
+                recurring = await session.get(AutoRenewPolicy, services.code)
+            if settings.auto_renew_enabled or recurring:
+                active_button_rows.append(
+                    KeyboardButtonRow(
+                        [KeyboardButtonCallback("🔁 تمدید خودکار از کیف پول", f"ar:view:{services.code}")]
+                    )
+                )
 
     if admin:
         admin_extra = [

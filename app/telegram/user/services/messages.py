@@ -14,6 +14,7 @@ from app.db.crud.plans import PlanManager
 from app.db.crud.services import ServiceCRUD
 from app.db.crud.user import UserCRUD
 from app.logger import LogType, get_logger
+from app.services.auto_renew.guards import telegram_write_guard
 from app.services.billing.renewal import (
     require_panel_userid,
 )
@@ -49,6 +50,7 @@ async def my_services_handler(event: Message):
 
 
 @bot_is_offline
+@telegram_write_guard
 async def service_message_handler(event: Message):
     msg = event.message.message or event.message.text or ""
     info = await UserCRUD().read_user(event.sender_id)

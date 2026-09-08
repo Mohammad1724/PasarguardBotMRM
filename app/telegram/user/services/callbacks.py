@@ -22,6 +22,7 @@ from app.db.crud.services import ServiceCRUD
 from app.db.crud.settings import SettingsManager
 from app.db.crud.user import UserCRUD, update_Money
 from app.logger import LogType, get_logger
+from app.services.auto_renew.guards import telegram_write_guard
 from app.services.billing.direct_pay_flow import (
     build_insufficient_balance_message,
     create_direct_pay_balance_button,
@@ -104,6 +105,7 @@ async def service_callback_filter(event: events.CallbackQuery.Event) -> bool:
 
 
 @bot_is_offline
+@telegram_write_guard
 async def service_callback_handler(event: events.CallbackQuery.Event, data: str | None = None):
     data = data or event.data.decode("utf-8", "ignore")
 

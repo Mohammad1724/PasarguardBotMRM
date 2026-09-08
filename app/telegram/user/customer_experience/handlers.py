@@ -338,6 +338,7 @@ async def control_panel(event):
         [button(f"{'✅' if getattr(config, key) else '❌'} {label}", f"toggle:{i}")]
         for i, (key, label) in enumerate(zip(FLAGS, FLAG_LABELS, strict=True))
     ]
+    buttons.append([Button.inline("تمدید دوره‌ای از کیف پول — نسخه دوم", "ar:admin:0")])
     buttons += [
         [button("آمار ۳۰ روز اخیر", "stats")],
         [button("تبدیل‌های ناتمام", "pending:0")],
