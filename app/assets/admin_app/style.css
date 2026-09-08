@@ -197,6 +197,68 @@ strong {
   margin-right: auto;
   font-size: 18px;
 }
+.nav-group {
+  margin: 7px 0;
+}
+.nav-group summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 12px;
+  border-radius: 10px;
+  color: #b6cec9;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.nav-group summary::-webkit-details-marker {
+  display: none;
+}
+.nav-group summary:hover,
+.nav-group[open] summary {
+  background: #ffffff08;
+}
+.nav-group.active summary {
+  color: #80e3c4;
+}
+.nav-group summary svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.group-count {
+  margin-right: auto;
+  color: #9dbdb5;
+  font-size: 10px;
+}
+.group-arrow {
+  font-size: 18px;
+  transition: transform 0.15s;
+}
+.nav-group[open] .group-arrow {
+  transform: rotate(-90deg);
+}
+.nav-group-items {
+  margin: 5px 15px 12px 0;
+  padding-right: 8px;
+  border-right: 1px solid #ffffff18;
+}
+.nav-group-items .nav-item {
+  padding: 10px;
+  gap: 8px;
+  font-size: 11px;
+}
+.nav-group summary:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid #80e3c4;
+  outline-offset: -2px;
+}
+@media (max-width: 760px) {
+  .breadcrumb-group {
+    display: none;
+  }
+}
 .sidebar-bottom {
   margin-top: auto;
   border-top: 1px solid #ffffff10;

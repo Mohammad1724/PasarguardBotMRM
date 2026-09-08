@@ -13,7 +13,7 @@ from app.logger import LogType, get_logger
 from app.services.auto_renew.locking import manual_write
 from app.services.billing.renewal import require_panel_userid
 from app.telegram.admin.bulk_increase import keyboards, states, texts
-from app.telegram.keyboards.admin import Panel_Admin_Buttons
+from app.telegram.keyboards.admin import Panel_Admin_Inline_Buttons
 from app.telegram.shared.utils.logging import send_log_message
 from app.telegram.state import delete_data, get_data, set_data, set_step
 from app.utils.formatting.conversions import day_to_timestamp, gigabytes_to_bytes
@@ -363,7 +363,7 @@ async def _run_bulk_increase(
             await _process_panel_manually(event, panel, job["services"], volume_bytes, time_days, state, issues)
 
     await clear_bulk_increase_steps(event.sender_id)
-    await _safe_edit(event, texts.build_result_message(state, issues), buttons=Panel_Admin_Buttons)
+    await _safe_edit(event, texts.build_result_message(state, issues), buttons=Panel_Admin_Inline_Buttons)
     await send_log_message(LogType.OTHER, message=texts.build_log_message(state, event.sender_id))
 
 
@@ -425,7 +425,7 @@ async def bulk_increase_callback_handler(event: events.CallbackQuery.Event):
 
     elif data == states.BULK_INCREASE_CANCEL:
         await clear_bulk_increase_steps(event.sender_id)
-        await event.edit(texts.CANCELLED_TEXT, buttons=Panel_Admin_Buttons)
+        await event.edit(texts.CANCELLED_TEXT, buttons=Panel_Admin_Inline_Buttons)
 
     elif data == states.BULK_INCREASE_CONFIRM:
         panel_code_str = await get_data(event.sender_id, states.STEP_KEY_PANEL)
@@ -438,7 +438,7 @@ async def bulk_increase_callback_handler(event: events.CallbackQuery.Event):
 
         panels = await _resolve_bulk_panels(panel_code_str)
         if not panels:
-            await event.edit(texts.NO_PANELS_ERROR, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.NO_PANELS_ERROR, buttons=Panel_Admin_Inline_Buttons)
             return
 
         panel_text = texts.panel_scope_text(panel_code_str, len(panels))
@@ -473,7 +473,7 @@ async def bulk_increase_callback_handler(event: events.CallbackQuery.Event):
         buttons = None
         if target_services > 0:
             buttons = keyboards.preflight_buttons()
-        await event.edit(preflight_message, buttons=buttons or Panel_Admin_Buttons)
+        await event.edit(preflight_message, buttons=buttons or Panel_Admin_Inline_Buttons)
 
     elif data == states.BULK_INCREASE_APPLY:
         panel_code_str = await get_data(event.sender_id, states.STEP_KEY_PANEL)
@@ -486,7 +486,7 @@ async def bulk_increase_callback_handler(event: events.CallbackQuery.Event):
 
         panels = await _resolve_bulk_panels(panel_code_str)
         if not panels:
-            await event.edit(texts.NO_PANELS_ERROR, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.NO_PANELS_ERROR, buttons=Panel_Admin_Inline_Buttons)
             return
 
         panel_text = texts.panel_scope_text(panel_code_str, len(panels))

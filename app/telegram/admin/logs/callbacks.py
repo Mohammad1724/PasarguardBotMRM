@@ -4,7 +4,7 @@ from telethon import events
 
 from app.db.crud.log_channels import LogChannelManager
 from app.telegram.admin.logs import keyboards, states, texts
-from app.telegram.keyboards.admin import Panel_Admin_Buttons
+from app.telegram.keyboards.admin import Panel_Admin_Inline_Buttons
 from app.telegram.state import set_step
 from config import ADMIN_ID
 
@@ -46,7 +46,7 @@ async def callback_log_admin(event: events.CallbackQuery.Event):
         username = event.sender.username if event.sender.username else "بدون نام کاربری"
         await event.edit(
             f"**🌺به پنل مدیریت خوش آمدید.**\nایدی عددی شما: `{event.sender_id}`\nنام کاربری شما: @{username}\n",
-            buttons=Panel_Admin_Buttons,
+            buttons=Panel_Admin_Inline_Buttons,
         )
 
     elif data == states.LOG_SHOW_STATUS:

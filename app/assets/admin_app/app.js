@@ -177,6 +177,7 @@ const S = {
   layout: [],
   buttonConfigs: {},
   route: 0,
+  openGroups: new Set(),
 };
 const can = (p) => S.meta?.actor.owner || S.meta?.actor.permissions.includes(p);
 const btn = (text, action, kind = "", extra = "") =>
@@ -218,36 +219,74 @@ function modal(title, html, footer = "") {
   d.innerHTML = `<div class="dialog-head"><h3>${esc(title)}</h3><button data-action="close-modal" aria-label="بستن">×</button></div><div class="dialog-content">${html}</div>${footer ? `<div class="editor-footer">${footer}</div>` : ""}`;
   if (!d.open) d.showModal();
 }
+const navigationGroups = [
+  {
+    key: "customers",
+    title: "کاربران و پشتیبانی",
+    icon: "users",
+    items: [
+      ["users", "users", "users.view"],
+      ["services", "server", "services.view"],
+      ["tickets", "ticket", "tickets.view"],
+    ],
+  },
+  {
+    key: "sales",
+    title: "فروش و مالی",
+    icon: "wallet",
+    items: [
+      ["plans", "layers", "plans.manage"],
+      ["finance", "wallet", "finance.view"],
+      ["renewals", "refresh", "finance.view"],
+    ],
+  },
+  {
+    key: "appearance",
+    title: "ظاهر و محتوا",
+    icon: "menu",
+    items: [
+      ["appearance", "menu", "appearance.manage"],
+      ["texts", "file", "appearance.manage"],
+    ],
+  },
+  {
+    key: "system",
+    title: "مدیریت سیستم",
+    icon: "shield",
+    items: [
+      ["settings", "sliders", "settings.manage"],
+      ["grants", "shield", "owner"],
+      ["audit", "history", "audit.view"],
+    ],
+  },
+];
+function navigationItem([key, icon]) {
+  const active = S.page === key;
+  return `<button class="nav-item ${active ? "active" : ""}" data-nav="${key}" ${active ? 'aria-current="page"' : ""}>${ico(icon)}<span>${titles[key]}</span>${active ? '<span class="chevron">‹</span>' : ""}</button>`;
+}
+function groupedNavigation() {
+  return (
+    navigationItem(["dashboard", "grid"]) +
+    navigationGroups
+      .map((group) => {
+        const items = group.items.filter(([key, _, permission]) =>
+          permission === "owner"
+            ? S.meta.actor.owner
+            : can(permission) || (key === "settings" && can("payments.manage")),
+        );
+        if (!items.length) return "";
+        const active = items.some(([key]) => key === S.page);
+        return `<details class="nav-group ${active ? "active" : ""}" data-nav-group="${group.key}" ${S.openGroups.has(group.key) ? "open" : ""}><summary>${ico(group.icon)}<span>${group.title}</span><small class="group-count">${fa(items.length)}</small><span class="group-arrow" aria-hidden="true">‹</span></summary><div class="nav-group-items">${items.map(navigationItem).join("")}</div></details>`;
+      })
+      .join("")
+  );
+}
 function shell() {
-  const nav = [
-    ["dashboard", "grid", null],
-    ["settings", "sliders", "settings.manage"],
-    ["appearance", "menu", "appearance.manage"],
-    ["texts", "file", "appearance.manage"],
-    ["plans", "layers", "plans.manage"],
-    ["users", "users", "users.view"],
-    ["services", "server", "services.view"],
-    ["tickets", "ticket", "tickets.view"],
-    ["finance", "wallet", "finance.view"],
-    ["grants", "shield", "owner"],
-    ["audit", "history", "audit.view"],
-  ];
+  const group = navigationGroups.find((group) =>
+    group.items.some(([key]) => key === S.page),
+  );
   $("#app").innerHTML =
-    `<aside class="sidebar"><div class="brand"><div class="brand-mark">پ</div><div><strong>پاسارگارد</strong><small>CONTROL CENTER</small></div></div><div class="nav-label">فضای کاری شما</div><nav>${nav
-      .filter(
-        ([k, _, p]) =>
-          !p ||
-          (p === "owner" && S.meta.actor.owner) ||
-          can(p) ||
-          (k === "settings" && can("payments.manage")),
-      )
-      .map(
-        ([k, i]) =>
-          `<button class="nav-item ${S.page === k ? "active" : ""}" data-nav="${k}">${ico(i)}<span>${titles[k]}</span>${S.page === k ? '<span class="chevron">‹</span>' : ""}</button>`,
-      )
-      .join(
-        "",
-      )}</nav><div class="sidebar-bottom"><small><span class="system-dot"></span>${window.AdminDemo ? "محیط پیش‌نمایش آزمایشی" : "نشست امن تلگرام"}</small><div class="profile"><div class="avatar">${ico("shield")}</div><div><strong>${esc(S.meta.actor.name)}</strong><small>${S.meta.actor.owner ? "دسترسی مالک" : "دسترسی محدود"} · نسخه ۳</small></div><button data-action="logout" title="خروج" aria-label="خروج">${ico("logout")}</button></div></div></aside><div class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="toggle-nav" aria-label="منو">${ico("menu")}</button><span>مرکز مدیریت</span><span> / </span><strong>${titles[S.page]}</strong></div><div class="top-actions"><span class="chip">${new Intl.DateTimeFormat("fa-IR", { dateStyle: "long" }).format(new Date())}</span><span class="chip"><span class="system-dot"></span>${window.AdminDemo ? "داده آزمایشی" : "متصل به ربات"}</span><button data-action="refresh" title="تازه‌سازی" aria-label="تازه‌سازی">${ico("refresh")}</button></div></header><main class="workspace" id="workspace"><div class="empty">در حال دریافت اطلاعات…</div></main></div>`;
+    `<aside class="sidebar"><div class="brand"><div class="brand-mark">پ</div><div><strong>پاسارگارد</strong><small>CONTROL CENTER</small></div></div><div class="nav-label">فضای کاری شما</div><nav aria-label="دسته‌های مدیریت">${groupedNavigation()}</nav><div class="sidebar-bottom"><small><span class="system-dot"></span>${window.AdminDemo ? "محیط پیش‌نمایش آزمایشی" : "نشست امن تلگرام"}</small><div class="profile"><div class="avatar">${ico("shield")}</div><div><strong>${esc(S.meta.actor.name)}</strong><small>${S.meta.actor.owner ? "دسترسی مالک" : "دسترسی محدود"} · نسخه ۳</small></div><button data-action="logout" title="خروج" aria-label="خروج">${ico("logout")}</button></div></div></aside><div class="main"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-action="toggle-nav" aria-label="منو">${ico("menu")}</button><span>مرکز مدیریت</span><span> / </span>${group ? `<span class="breadcrumb-group">${group.title}</span><span class="breadcrumb-group"> / </span>` : ""}<strong>${titles[S.page]}</strong></div><div class="top-actions"><span class="chip">${new Intl.DateTimeFormat("fa-IR", { dateStyle: "long" }).format(new Date())}</span><span class="chip"><span class="system-dot"></span>${window.AdminDemo ? "داده آزمایشی" : "متصل به ربات"}</span><button data-action="refresh" title="تازه‌سازی" aria-label="تازه‌سازی">${ico("refresh")}</button></div></header><main class="workspace" id="workspace"><div class="empty">در حال دریافت اطلاعات…</div></main></div>`;
 }
 const head = (title, desc, action = "") =>
   `<div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div>${action}</div>`;
@@ -267,6 +306,10 @@ async function navigate(page, force = false) {
     return;
   S.dirty = false;
   S.page = page;
+  const group = navigationGroups.find((group) =>
+    group.items.some(([key]) => key === page),
+  );
+  if (group) S.openGroups.add(group.key);
   S.edit = null;
   S.save = null;
   S.listPage = 1;
@@ -867,6 +910,18 @@ function changedLayout() {
   S.dirty = true;
   drawLayout();
 }
+// Native details remain keyboard-accessible. Keep expansion during route re-renders.
+document.addEventListener(
+  "toggle",
+  (event) => {
+    const group = event.target;
+    if (!group.matches?.("details[data-nav-group]") || !group.isConnected)
+      return;
+    if (group.open) S.openGroups.add(group.dataset.navGroup);
+    else S.openGroups.delete(group.dataset.navGroup);
+  },
+  true,
+);
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("button,[data-nav]");
   if (!b || b.disabled) return;

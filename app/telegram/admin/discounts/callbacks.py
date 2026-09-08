@@ -12,7 +12,7 @@ from app.db.crud.user import UserCRUD
 from app.logger import get_logger
 from app.services.billing.sticky_discount import format_discount_deep_links_text
 from app.telegram.admin.discounts import keyboards, service, states
-from app.telegram.keyboards.admin import Panel_Admin_Buttons
+from app.telegram.keyboards.admin import Panel_Admin_Inline_Buttons
 from app.telegram.shared.url_presets import get_bot_username
 from app.telegram.state import get_data, get_step, set_data, set_step
 from app.utils.formatting.dates import Time_Date
@@ -135,7 +135,7 @@ async def callback_discount_admin(event: events.CallbackQuery.Event):
         username = event.sender.username if event.sender.username else "بدون نام کاربری"
         await event.edit(
             f"**🌺به پنل مدیریت خوش آمدید.**\nایدی عددی شما: `{event.sender_id}`\nنام کاربری شما: @{username}\n",
-            buttons=Panel_Admin_Buttons,
+            buttons=Panel_Admin_Inline_Buttons,
         )
         raise events.StopPropagation
 

@@ -4,6 +4,7 @@ from telethon import Button
 
 from app.db.crud.user import UserCRUD
 
+from .admin_navigation import ADMIN_APP_LABEL, ADMIN_CATEGORIES, ADMIN_NAV_PREFIX, ADMIN_ROOT_LABEL, CATEGORIES_BY_KEY
 from .common import create_button, glass_inline_button, glass_text_button, styled_simple_webview_button
 
 DOCS_URL = "https://amirkenzo.github.io/PasarguardBot/"
@@ -95,23 +96,31 @@ def build_admin_reseller_chpwd_confirm_buttons(user_id: int, account_code: int) 
     ]
 
 
+def admin_category_buttons(key: str) -> list:
+    category = CATEGORIES_BY_KEY[key]
+    rows = [
+        [
+            styled_simple_webview_button(label, DOCS_URL) if label == "📚 مستندات ربات" else create_button(label)
+            for label in row
+        ]
+        for row in category.rows
+    ]
+    rows.append([create_button(ADMIN_ROOT_LABEL), create_button("🏠")])
+    return rows
+
+
+# New messages use a reply keyboard, so choosing a category also replaces old flat keyboards.
 Panel_Admin_Buttons = [
-    [create_button("💳 تنظیمات درگاه"), create_button("👥 آمار گیری")],
-    [create_button("📚 منوی پنل ها"), create_button("⚙️ تنظیمات ربات")],
-    [create_button("🎟 کدتخفیف"), create_button("🗞 ساخت پلن")],
-    [create_button("🎁 کد هدیه")],
-    [create_button("🏢 پلن نمایندگی")],
-    [create_button("👤 مدیریت کاربر"), create_button("📮 ارسال همگانی")],
-    [create_button("📥 فوروارد همگانی")],
-    [create_button("➖ کسر موجودی"), create_button("➕ افزودن موجودی")],
-    [create_button("💰 شارژ گروهی"), create_button("🔄 ریست دریافت تست")],
-    [create_button("📈 افزایش حجم و زمان همگانی"), create_button("🔐 قفل چنل ها")],
-    [create_button("📝 مدیریت لاگ‌ها"), create_button("📦 بکاپ ربات")],
-    [create_button("📝 متن‌های ربات"), create_button("⌨️ مدیریت دکمه‌های کیبورد")],
-    [create_button("🔗 لینک های آماده"), styled_simple_webview_button("📚 مستندات ربات", DOCS_URL)],
-    [create_button("🈸 آپدیت برنامه ها")],
-    [create_button("🏠")],
-]
+    [create_button(category.title) for category in ADMIN_CATEGORIES[i : i + 2]]
+    for i in range(0, len(ADMIN_CATEGORIES), 2)
+] + [[create_button(ADMIN_APP_LABEL)], [create_button("🏠")]]
+
+# Message edits cannot install a reply keyboard. Legacy completion/cancel callbacks
+# use this inline equivalent; each category opens a fresh, compatible reply submenu.
+Panel_Admin_Inline_Buttons = [
+    [Button.inline(category.title, ADMIN_NAV_PREFIX + category.key) for category in ADMIN_CATEGORIES[i : i + 2]]
+    for i in range(0, len(ADMIN_CATEGORIES), 2)
+] + [[Button.inline(ADMIN_APP_LABEL, ADMIN_NAV_PREFIX + "miniapp")], [Button.inline("🏠", "DataCancel")]]
 
 BT_takhfifList = [
     [create_button("🎛 لیست کدتخفیف"), create_button("🪄 ساخت کدتخفیف")],

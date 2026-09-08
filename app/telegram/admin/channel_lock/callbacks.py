@@ -29,14 +29,14 @@ async def callback_lock_channels_back(event: events.CallbackQuery.Event):
     """Handle back button - return to admin panel"""
     logger.info("callback_lock_channels_back")
 
-    from app.telegram.keyboards.admin import Panel_Admin_Buttons
+    from app.telegram.keyboards.admin import Panel_Admin_Inline_Buttons
 
     await set_step(event.sender_id, states.PANEL_STEP)
 
     username = event.sender.username if event.sender.username else "بدون نام کاربری"
     await event.edit(
         f"**🌺به پنل مدیریت خوش آمدید.**\nایدی عددی شما: `{event.sender_id}`\nنام کاربری شما: @{username}\n",
-        buttons=Panel_Admin_Buttons,
+        buttons=Panel_Admin_Inline_Buttons,
     )
 
 

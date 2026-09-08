@@ -8,7 +8,7 @@ from app.db.crud.wallets import WalletCRUD
 from app.logger import LogType, get_logger
 from app.telegram.admin.wallets import keyboards, states, texts
 from app.telegram.admin.wallets.messages import get_wallets_menu_text
-from app.telegram.keyboards.admin import Panel_Admin_Buttons
+from app.telegram.keyboards.admin import Panel_Admin_Inline_Buttons
 from app.telegram.shared.utils.logging import send_log_message
 from app.telegram.state import clear_user, delete_data, get_data, set_data, set_step
 from config import ADMIN_ID
@@ -167,7 +167,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
         await delete_data(event.sender_id, "group_charge_type")
         await delete_data(event.sender_id, "group_charge_amount_value")
         await set_step(event.sender_id, "panel")
-        await event.edit(texts.GROUP_CHARGE_CANCELLED, buttons=Panel_Admin_Buttons)
+        await event.edit(texts.GROUP_CHARGE_CANCELLED, buttons=Panel_Admin_Inline_Buttons)
         raise events.StopPropagation
 
     if data.startswith("group_charge_confirm:"):
@@ -191,7 +191,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             if isinstance(user_ids, str):
                 await event.edit(
                     texts.group_charge_users_error(user_ids),
-                    buttons=Panel_Admin_Buttons,
+                    buttons=Panel_Admin_Inline_Buttons,
                 )
                 raise events.StopPropagation from None
 
@@ -204,7 +204,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             user_type_text = texts.ACTIVE_SERVICE_USERS_LABEL
 
         if not users:
-            await event.edit(texts.GROUP_CHARGE_NO_USERS, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.GROUP_CHARGE_NO_USERS, buttons=Panel_Admin_Inline_Buttons)
             raise events.StopPropagation from None
 
         await event.edit(
@@ -229,7 +229,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
 
         await event.edit(
             texts.group_charge_result(user_type_text, len(users), success_count, failed_count, amount, total_charged),
-            buttons=Panel_Admin_Buttons,
+            buttons=Panel_Admin_Inline_Buttons,
         )
         await send_log_message(
             LogType.OTHER,
@@ -244,7 +244,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
         reset_type = data.split(":")[1]
         tested_users = await UserCRUD().get_users_with_tested()
         if not tested_users:
-            await event.edit(texts.NO_TESTED_USERS, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.NO_TESTED_USERS, buttons=Panel_Admin_Inline_Buttons)
             raise events.StopPropagation from None
 
         if reset_type == "all":
@@ -255,7 +255,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             if isinstance(user_ids, str):
                 await event.edit(
                     texts.group_reset_users_error(user_ids),
-                    buttons=Panel_Admin_Buttons,
+                    buttons=Panel_Admin_Inline_Buttons,
                 )
                 raise events.StopPropagation from None
 
@@ -264,7 +264,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             user_type_text = texts.ACTIVE_SERVICE_USERS_LABEL
 
         if not users_to_reset:
-            await event.edit(texts.NO_TESTED_ACTIVE_USERS, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.NO_TESTED_ACTIVE_USERS, buttons=Panel_Admin_Inline_Buttons)
             raise events.StopPropagation from None
 
         await event.edit(
@@ -275,7 +275,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
 
     if data == "group_reset_cancel":
         await set_step(event.sender_id, "panel")
-        await event.edit(texts.GROUP_RESET_CANCELLED, buttons=Panel_Admin_Buttons)
+        await event.edit(texts.GROUP_RESET_CANCELLED, buttons=Panel_Admin_Inline_Buttons)
         raise events.StopPropagation
 
     if data.startswith("group_reset_confirm:"):
@@ -287,7 +287,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
         reset_type = parts[1]
         tested_users = await UserCRUD().get_users_with_tested()
         if not tested_users:
-            await event.edit(texts.NO_TESTED_USERS, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.NO_TESTED_USERS, buttons=Panel_Admin_Inline_Buttons)
             raise events.StopPropagation from None
 
         if reset_type == "all":
@@ -298,7 +298,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             if isinstance(user_ids, str):
                 await event.edit(
                     texts.group_reset_users_error(user_ids),
-                    buttons=Panel_Admin_Buttons,
+                    buttons=Panel_Admin_Inline_Buttons,
                 )
                 raise events.StopPropagation from None
 
@@ -307,7 +307,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             user_type_text = texts.ACTIVE_SERVICE_USERS_LABEL
 
         if not users_to_reset:
-            await event.edit(texts.NO_TESTED_ACTIVE_USERS, buttons=Panel_Admin_Buttons)
+            await event.edit(texts.NO_TESTED_ACTIVE_USERS, buttons=Panel_Admin_Inline_Buttons)
             raise events.StopPropagation from None
 
         await event.edit(
@@ -332,7 +332,7 @@ async def balance_callback_handler(event: events.CallbackQuery.Event):
             texts.group_reset_result(
                 user_type_text, len(tested_users), len(users_to_reset), success_count, failed_count
             ),
-            buttons=Panel_Admin_Buttons,
+            buttons=Panel_Admin_Inline_Buttons,
         )
         await send_log_message(
             LogType.OTHER,
