@@ -24,13 +24,26 @@ logger = get_logger(__name__)
 async def process_webhook_events(events: list[dict[str, Any]]) -> None:
     """Process a list of webhook events."""
 
-    for event_data in events:
-        try:
-            event = WebhookEvent(**event_data)
+    import hashlib
+    import json
+    import time
+
+    from app.db.base import AsyncSessionLocal
+    from app.db.models.payment_safety import WebhookDelivery
+    from app.services.locks import distributed_lock
+
+    # Validate the entire batch before applying any event.
+    validated = [(data, WebhookEvent(**data)) for data in events]
+    for data, event in validated:
+        digest = hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        async with distributed_lock(f"webhook:{digest}"):
+            async with AsyncSessionLocal() as session:
+                delivered = await session.get(WebhookDelivery, digest)
+                if delivered and delivered.completed_at > int(time.time()) - 86400:
+                    continue
             await handle_event(event)
-        except Exception as e:
-            logger.error(f"Failed to process webhook event: {e}")
-            logger.debug(f"Event data: {event_data}")
+            async with AsyncSessionLocal() as session, session.begin():
+                await session.merge(WebhookDelivery(digest=digest, completed_at=int(time.time())))
 
 
 async def handle_event(event: WebhookEvent) -> None:

@@ -7,7 +7,7 @@ The pending row stores the ZarinPal authority in ``amount`` (String column).
 """
 
 import contextlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from telethon import Button
 
@@ -16,7 +16,6 @@ from app.db.crud.cryptopayments import CryptoPaymentsCRUD
 from app.db.crud.settings import SettingsManager
 from app.logger import LogType, get_logger
 from app.services.billing.direct_pay_fulfillment import (
-    cancel_after_crypto_expire,
     try_fulfill_after_crypto_credit,
 )
 from app.services.billing.gateways import zarinpal
@@ -93,16 +92,26 @@ async def confirm_zarinpal_payment(payment, settings, ref_id: str) -> bool:
         bonus_percent=settings.crypto_bonus_percent,
     )
     total_amount = int(payment.amount_irt) + bonus
-    approved = await CryptoPaymentsCRUD().approve_and_credit(payment.order_id, total_amount, int(datetime.now(UTC).timestamp()))
+    approved = await CryptoPaymentsCRUD().approve_and_credit(
+        payment.order_id,
+        total_amount,
+        int(datetime.now(UTC).timestamp()),
+        payment_ref=f"zarinpal:{payment.amount}",
+        gateway_ref_id=ref_id or None,
+    )
     if not approved:
         logger.warning("ZarinPal payment already processed or invalid: order_id=%s", payment.order_id)
         return False
     payment, new_amount = approved
 
     fulfilled = await try_fulfill_after_crypto_credit(int(payment.order_id))
+    await maybe_pay_referral_reward(
+        int(payment.user_id), int(payment.amount_irt), source="zarinpal", source_id=int(payment.order_id)
+    )
     if not fulfilled:
-        await maybe_pay_referral_reward(int(payment.user_id), int(payment.amount_irt), source="zarinpal")
-        user_msg = _format_user_message(payment, settings, bonus, total_amount, new_amount, ref_id, settings.zarinpal_sandbox)
+        user_msg = _format_user_message(
+            payment, settings, bonus, total_amount, new_amount, ref_id, settings.zarinpal_sandbox
+        )
         with contextlib.suppress(Exception):
             await Kenzo.send_message(
                 payment.user_id,
@@ -141,7 +150,7 @@ class ZarinpalProcessor(BasePaymentProcessor):
 
     async def check_payments(self):
         settings = await SettingsManager().get_settings()
-        if not settings or not settings.zarinpal_mode or not settings.zarinpal_merchant:
+        if not settings:
             return
 
         crud = CryptoPaymentsCRUD()
@@ -149,20 +158,15 @@ class ZarinpalProcessor(BasePaymentProcessor):
         if not pending_payments:
             return
 
-        current_time = datetime.now(UTC)
         for payment in pending_payments:
-            created_time = datetime.fromtimestamp(payment.createtime, tz=UTC)
-            if current_time - created_time > timedelta(minutes=30):
-                await crud.expire_payment(payment.order_id)
-                await cancel_after_crypto_expire(int(payment.order_id))
-                logger.info("ZarinPal invoice %s expired", payment.order_id)
-                continue
-
+            await crud.schedule_gateway_retry(payment)
             result = await zarinpal.verify_payment(
-                settings.zarinpal_merchant,
+                (payment.gateway_merchant or settings.zarinpal_merchant),
                 int(payment.amount_irt),
                 str(payment.amount),
-                sandbox=settings.zarinpal_sandbox,
+                sandbox=(
+                    payment.gateway_sandbox == "1" if payment.gateway_sandbox is not None else settings.zarinpal_sandbox
+                ),
             )
             if result.ok:
                 try:

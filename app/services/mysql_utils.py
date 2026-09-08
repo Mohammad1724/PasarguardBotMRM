@@ -112,4 +112,4 @@ def escape_mysql_string(value: str) -> str:
 
     Single quotes are escaped by doubling them (MySQL standard).
     """
-    return value.replace("'", "''")
+    return value.replace("\\", "\\\\").replace("'", "''")

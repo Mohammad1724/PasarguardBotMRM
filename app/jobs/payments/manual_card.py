@@ -34,7 +34,7 @@ class ManualCardProcessor(BasePaymentProcessor):
             result = await crud.approve_manual(tx)
             if not result:
                 continue
-            await maybe_pay_referral_reward(int(tx.user_id), int(tx.amount), source="manual")
+            await maybe_pay_referral_reward(int(tx.user_id), int(tx.amount), source="manual", source_id=int(tx.id))
             new_amount = result["new_balance"]
             bonus = result["bonus"]
             try:

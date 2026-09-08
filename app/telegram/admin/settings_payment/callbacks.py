@@ -43,6 +43,7 @@ _SETTINGS_PAYMENT_EXACT_CALLBACKS = frozenset(
         "toggle_zarinpal_mode",
         "toggle_zarinpal_sandbox",
         "set_zarinpal_merchant",
+        "set_zarinpal_callback_url",
         "set_zarinpal_limits",
         "stars_settings_menu",
         "toggle_stars_mode",
@@ -294,6 +295,13 @@ async def callback_settings_payment(event: events.CallbackQuery.Event):
             buttons=keyboards.zarinpal_settings_buttons(settings),
         )
 
+    elif data == "set_zarinpal_callback_url":
+        await set_step(event.sender_id, "set_zarinpal_callback_url")
+        await event.edit(
+            "آدرس HTTPS بازگشت در دامنه تأییدشده درگاه را وارد کنید (مثلاً https://bot.example.com/api/payments/zarinpal/return):",
+            buttons=keyboards.back_to_settings_card_row(),
+        )
+
     elif data == "set_zarinpal_merchant":
         await set_step(event.sender_id, "set_zarinpal_merchant")
         await event.edit(texts.ZARINPAL_MERCHANT_PROMPT, buttons=keyboards.back_to_settings_card_row())
@@ -388,7 +396,7 @@ async def callback_transaction_review(event: events.CallbackQuery.Event):
             completed_at=result["completed_at"],
         )
         await event.edit(admin_message, buttons=keyboards.tx_review_result_button(approved=True))
-        await maybe_pay_referral_reward(int(tx.user_id), int(tx.amount), source="manual")
+        await maybe_pay_referral_reward(int(tx.user_id), int(tx.amount), source="manual", source_id=int(tx.id))
         fulfilled = await try_fulfill_after_manual_credit(tx_id)
         if not fulfilled:
             await Kenzo.send_message(

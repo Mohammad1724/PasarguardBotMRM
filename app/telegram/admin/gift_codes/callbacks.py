@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from telethon import events
+from telethon import Button, events
 
 from app.db.crud.gift_codes import GiftCodeCRUD
 from app.telegram.admin.gift_codes import keyboards, states, texts
@@ -35,14 +35,11 @@ def _gift_admin_callback_filter(event: events.CallbackQuery.Event) -> bool:
 
 async def _prompt_gift_value(event, gtype: str) -> None:
     await set_data(event.sender_id, "gift_type", gtype)
-    prompts = {
-        "balance": "مبلغ شارژ کیف پول را به تومان وارد کنید (مثال: 50000):",
-        "days": "تعداد روز رایگان را وارد کنید (مثال: 30):",
-        "volume": "مقدار حجم رایگان را به گیگابایت وارد کنید (مثال: 10):",
-    }
-
-    await event.edit(prompts[gtype], buttons=keyboards.gift_back_row())
-    await set_step(event.sender_id, states.GIFT_VALUE_STEP_BY_TYPE[gtype])
+    await event.edit(
+        "کد دلخواه را وارد کنید (۱ تا ۲۴ حرف انگلیسی، عدد، - یا _) یا ساخت خودکار را بزنید:",
+        buttons=[[Button.inline("🎲 کد خودکار", "gift_skip_code")], *keyboards.gift_back_row()],
+    )
+    await set_step(event.sender_id, "gift_manual_code")
 
 
 async def callback_gift_admin(event: events.CallbackQuery.Event):
@@ -69,7 +66,9 @@ async def callback_gift_admin(event: events.CallbackQuery.Event):
         days = int(data.split(":")[1])
         expires_at = int(time.time()) + days * 86400 if days > 0 else 0
         await set_data(event.sender_id, "gift_expires_at", expires_at)
-        await event.edit("یک یادداشت اختیاری برای این کد ارسال کنید (یا `-` بفرستید):", buttons=keyboards.gift_back_row())
+        await event.edit(
+            "یک یادداشت اختیاری برای این کد ارسال کنید (یا `-` بفرستید):", buttons=keyboards.gift_back_row()
+        )
         await set_step(event.sender_id, "gift_note")
 
     elif data == "gift_cancel" or data == "gift_back_main":
@@ -88,7 +87,9 @@ async def callback_gift_admin(event: events.CallbackQuery.Event):
         if not gifts:
             await event.edit("هنوز کد هدیه‌ای ساخته نشده است.", buttons=keyboards.gift_main_menu_buttons())
         else:
-            await event.edit(f"🎛 **لیست کدهای هدیه** ({len(gifts)} کد)", buttons=keyboards.gift_list_buttons(gifts, page))
+            await event.edit(
+                f"🎛 **لیست کدهای هدیه** ({len(gifts)} کد)", buttons=keyboards.gift_list_buttons(gifts, page)
+            )
 
     elif data.startswith("gift_view:"):
         _, gift_id, page = data.split(":")
@@ -119,7 +120,10 @@ async def callback_gift_admin(event: events.CallbackQuery.Event):
         _, gift_id, page = data.split(":")
         await crud.delete(int(gift_id))
         gifts = await crud.get_all()
-        await event.edit("🗑 کد حذف شد.", buttons=keyboards.gift_list_buttons(gifts, int(page)) if gifts else keyboards.gift_main_menu_buttons())
+        await event.edit(
+            "🗑 کد حذف شد.",
+            buttons=keyboards.gift_list_buttons(gifts, int(page)) if gifts else keyboards.gift_main_menu_buttons(),
+        )
 
 
 def register(client):

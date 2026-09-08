@@ -187,6 +187,22 @@ async def message_handler_settings_payment(event: Message):
         await set_step(event.sender_id, "SettingsCardToCard")
         menu_text, buttons = await _maar_menu()
         await event.respond(menu_text, buttons=buttons)
+    elif await get_step(event.sender_id) == "set_zarinpal_callback_url" and msg:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(msg.strip())
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.hostname.lower() in {"t.me", "telegram.me"}
+        ):
+            await event.respond("آدرس HTTPS معتبر روی دامنه درگاه وارد کنید، نه لینک تلگرام.")
+            raise events.StopPropagation
+        await SettingsManager().update_setting_by_name("zarinpal_callback_url", msg.strip())
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        await event.respond("✅ آدرس بازگشت ذخیره شد.")
     elif await get_step(event.sender_id) == "set_zarinpal_merchant" and msg:
         await SettingsManager().update_setting_by_name("zarinpal_merchant", msg.strip()[:64])
         await clear_user(event.sender_id)
@@ -206,6 +222,9 @@ async def message_handler_settings_payment(event: Message):
 
     elif await get_step(event.sender_id) == "set_zarinpal_max" and msg.isdigit():
         min_val = await get_data(event.sender_id, "zarinpal_deposit_min")
+        if not min_val or int(msg) < int(min_val) or int(msg) > 10**12:
+            await event.respond("حداقل باید مثبت و حداکثر بزرگ‌تر یا مساوی حداقل باشد.")
+            raise events.StopPropagation
         settings = await SettingsManager().get_settings()
         await SettingsManager().update_setting(
             settings.id,
@@ -243,6 +262,9 @@ async def message_handler_settings_payment(event: Message):
 
     elif await get_step(event.sender_id) == "set_stars_max" and msg.isdigit():
         min_val = await get_data(event.sender_id, "stars_deposit_min")
+        if not min_val or int(msg) < int(min_val) or int(msg) > 10**12:
+            await event.respond("حداقل باید مثبت و حداکثر بزرگ‌تر یا مساوی حداقل باشد.")
+            raise events.StopPropagation
         settings = await SettingsManager().get_settings()
         await SettingsManager().update_setting(
             settings.id,
@@ -276,7 +298,11 @@ async def message_handler_settings_payment(event: Message):
         await event.respond(texts.NUMERIC_ONLY)
 
     elif await get_step(event.sender_id) in ("set_referral_first_bonus", "set_referral_min_deposit") and msg.isdigit():
-        key = "referral_first_bonus" if await get_step(event.sender_id) == "set_referral_first_bonus" else "referral_min_deposit"
+        key = (
+            "referral_first_bonus"
+            if await get_step(event.sender_id) == "set_referral_first_bonus"
+            else "referral_min_deposit"
+        )
         await SettingsManager().update_setting_by_name(key, int(msg))
         await clear_user(event.sender_id)
         await set_step(event.sender_id, "SettingsCardToCard")

@@ -263,7 +263,9 @@ async def _process_payment_confirmation(payment, settings, transaction, address_
         return
     payment, new_amount = approved
 
-    await maybe_pay_referral_reward(int(payment.user_id), int(payment.amount_irt), source="usdt")
+    await maybe_pay_referral_reward(
+        int(payment.user_id), int(payment.amount_irt), source="usdt", source_id=int(payment.order_id)
+    )
     fulfilled = await try_fulfill_after_crypto_credit(int(payment.order_id))
     if not fulfilled:
         user_msg = _format_user_payment_message(payment, settings, bonus, total_amount, new_amount)

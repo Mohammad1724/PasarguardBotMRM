@@ -14,6 +14,7 @@ SET_RESELLER_MIN_WALLET_STEP = "set_reseller_min_wallet"
 SET_MANUAL_BONUS_PERCENT_STEP = "set_manual_bonus_percent"
 SET_CRYPTO_BONUS_PERCENT_STEP = "set_crypto_bonus_percent"
 
+SET_ZARINPAL_CALLBACK_URL_STEP = "set_zarinpal_callback_url"
 SET_ZARINPAL_MERCHANT_STEP = "set_zarinpal_merchant"
 SET_ZARINPAL_MIN_STEP = "set_zarinpal_min"
 SET_ZARINPAL_MAX_STEP = "set_zarinpal_max"
@@ -41,6 +42,7 @@ PAYMENT_INPUT_STEPS = frozenset(
         SET_MANUAL_BONUS_PERCENT_STEP,
         SET_CRYPTO_BONUS_PERCENT_STEP,
         SET_ZARINPAL_MERCHANT_STEP,
+        SET_ZARINPAL_CALLBACK_URL_STEP,
         SET_ZARINPAL_MIN_STEP,
         SET_ZARINPAL_MAX_STEP,
         SET_STARS_RATE_STEP,

@@ -46,5 +46,5 @@ class CustomMarkdown:
         return markdown.unparse(text, entities)
 
 
-Kenzo = TelegramClient(TELETHON_SESSION_PATH, API_ID, API_HASH)
+Kenzo = TelegramClient(None if TELETHON_SESSION_PATH == ":memory:" else TELETHON_SESSION_PATH, API_ID, API_HASH)
 Kenzo.parse_mode = CustomMarkdown()

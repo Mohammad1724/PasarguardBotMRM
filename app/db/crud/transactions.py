@@ -107,6 +107,10 @@ class TransactionCRUD:
             locked_tx.completed_at = now
             locked_tx.auto_approve_at = None
             locked_tx.auto_approve_rule_id = None
+            from app.services.billing.referral_ledger import credit_referral
+
+            await session.flush()
+            await credit_referral(session, user, int(locked_tx.amount), f"manual:{tx_id}", settings)
             new_balance = int(user.amount or 0)
         return {"new_balance": int(new_balance), "bonus": bonus, "total": total, "completed_at": now}
 

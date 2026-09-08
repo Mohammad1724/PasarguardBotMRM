@@ -13,7 +13,7 @@ from telethon.tl.custom import Message
 
 from app import Kenzo
 from app.db.crud.cards import ManualCardManager
-from app.db.crud.cryptopayments import add_order_crypto_payment, count_pending_orders
+from app.db.crud.cryptopayments import CryptoPaymentsCRUD, add_order_crypto_payment, count_pending_orders
 from app.db.crud.keyboards import get_button_text
 from app.db.crud.manual_auto_approve_rules import ManualAutoApproveRuleCRUD
 from app.db.crud.receipt_hash import ReceiptHashCRUD, compute_receipt_phash
@@ -930,6 +930,7 @@ async def create_zarinpal_invoice(event, *, amount_irt: int) -> None:
             max_amount=settings.zarinpal_deposit_max,
         )
         return
+    await CryptoPaymentsCRUD().age_invoices()
     if await count_pending_orders(event.sender_id) >= 3:
         await event.respond(
             texts.PENDING_ORDERS_LIMIT,
@@ -938,19 +939,39 @@ async def create_zarinpal_invoice(event, *, amount_irt: int) -> None:
         await set_step(event.sender_id, states.STEP_HOME)
         return
 
-    from app.services.billing.gateways import zarinpal
-    from app.telegram.shared.url_presets import get_bot_username
+    from urllib.parse import urlparse
 
-    order = random.randint(55555, 999999)
-    bot_username = await get_bot_username(Kenzo)
+    from app.services.billing.gateways import zarinpal
+
+    callback_url = (settings.zarinpal_callback_url or "").strip()
+    parsed = urlparse(callback_url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.hostname.lower() in {"t.me", "telegram.me"}:
+        await event.respond("❌ آدرس HTTPS بازگشت درگاه هنوز توسط مدیر تنظیم نشده است.")
+        return
+    crud = CryptoPaymentsCRUD()
+    await crud.age_invoices()
+    try:
+        payment = await crud.reserve_invoice(
+            event.sender_id,
+            "ZARINPAL",
+            "",
+            amount,
+            merchant=settings.zarinpal_merchant,
+            sandbox=settings.zarinpal_sandbox,
+        )
+    except ValueError, RuntimeError:
+        await event.respond(texts.PENDING_ORDERS_LIMIT)
+        return
+    order = payment.order_id
     result = await zarinpal.request_payment(
         settings.zarinpal_merchant,
         amount,
-        f"https://t.me/{bot_username}",
+        callback_url,
         f"شارژ کیف پول | فاکتور {order}",
         sandbox=settings.zarinpal_sandbox,
     )
     if not result.ok:
+        await crud.update_payment_status(order, "Failed")
         logger.error("ZarinPal request failed for order %s: %s", order, result.message)
         await event.respond(
             texts.ZARINPAL_REQUEST_FAILED,
@@ -959,11 +980,15 @@ async def create_zarinpal_invoice(event, *, amount_irt: int) -> None:
         await set_step(event.sender_id, states.STEP_HOME)
         return
 
+    await crud.set_gateway_authority(order, result.authority)
+    if await is_direct_pay_active(event.sender_id) or await get_pending_for_user(event.sender_id):
+        await link_crypto_order(int(event.sender_id), int(order))
+
     respond = getattr(event, "respond", None)
     if respond is None:
         return
     await event.respond("⏳", buttons=await bhome_buttons(event.sender_id, "fa"))
-    invoice = await event.respond(
+    await event.respond(
         texts.ZARINPAL_INVOICE_TEMPLATE.format(
             order=order,
             amount=amount,
@@ -977,18 +1002,7 @@ async def create_zarinpal_invoice(event, *, amount_irt: int) -> None:
         ],
     )
 
-    await add_order_crypto_payment(
-        order_id=order,
-        user_id=event.sender_id,
-        arz="zarinpal",
-        amount=result.authority,
-        amount_irt=amount,
-        createtime=Time_Date()["stamp"],
-        msg_id=invoice.id,
-    )
-    if await is_direct_pay_active(event.sender_id) or await get_pending_for_user(event.sender_id):
-        await link_crypto_order(int(event.sender_id), int(order))
-        await clear_user(event.sender_id)
+    await clear_user(event.sender_id)
 
     log_text = (
         "#فاکتور_جدید_زرینپال\n"

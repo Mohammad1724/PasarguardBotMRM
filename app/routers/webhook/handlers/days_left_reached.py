@@ -54,6 +54,7 @@ async def handle_days_left_reached(event: WebhookEvent) -> None:
             # Fallback to days_left if expire parsing fails
             days_left = event.days_left or 0
             time_diff_seconds = days_left * 24 * 3600
+            raise
     else:
         # Fallback to days_left if no expire date
         days_left = event.days_left or 0
@@ -101,6 +102,7 @@ async def handle_days_left_reached(event: WebhookEvent) -> None:
     except errors.FloodWaitError as e:
         logger.warning(f"FloodWait error for user {service.id}: {e}")
         await service_crud.update_service(service.code, expire_notified=True)
+        raise
 
     except errors.InputUserDeactivatedError:
         logger.warning(f"User {service.id} is deactivated")
@@ -114,3 +116,4 @@ async def handle_days_left_reached(event: WebhookEvent) -> None:
 
     except Exception as e:
         logger.error(f"Failed to send expiration notification to user {service.id}: {e}")
+        raise

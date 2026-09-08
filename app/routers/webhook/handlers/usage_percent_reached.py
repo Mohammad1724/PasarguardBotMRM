@@ -69,6 +69,7 @@ async def handle_usage_percent_reached(event: WebhookEvent) -> None:
     except errors.FloodWaitError as e:
         logger.warning(f"FloodWait error for user {service.id}: {e}")
         await service_crud.update_service(service.code, low_volume_notified=True)
+        raise
 
     except errors.InputUserDeactivatedError:
         logger.warning(f"User {service.id} is deactivated")
@@ -82,3 +83,4 @@ async def handle_usage_percent_reached(event: WebhookEvent) -> None:
 
     except Exception as e:
         logger.error(f"Failed to send low data notification to user {service.id}: {e}")
+        raise

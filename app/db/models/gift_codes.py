@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Boolean, Column, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, Integer, String, Text
 
 from app.db.base import Base
 
@@ -37,6 +37,10 @@ class GiftCodeUse(Base):
     service_code = Column(String(100), nullable=True)
     value = Column(BigInteger, nullable=False, default=0)
     used_at = Column(BigInteger, nullable=False, default=0)
+
+    request_id = Column(String(32), nullable=True, unique=True)
+    status = Column(String(20), nullable=False, default="applied")
+    plan = Column(Text, nullable=True)
 
     def __repr__(self):
         return f"<GiftCodeUse(code_id={self.code_id}, user_id={self.user_id}, used_at={self.used_at})>"

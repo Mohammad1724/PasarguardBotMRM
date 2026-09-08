@@ -14,5 +14,7 @@ docs/package-lock.json
 *.session
 *.session-journal
 business_connections.json
-/tests
 /todo
+
+.pytest_cache/
+.ruff_cache/

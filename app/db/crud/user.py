@@ -180,25 +180,25 @@ class UserCRUD:
             return False, "There is no user....."
 
     async def update_ref(self, user_id, ref_value):
-        async with Session() as session:
-            result = await session.execute(select(User).filter_by(id=user_id))
-            existing_user = result.scalar()
-            if existing_user:
-                if not existing_user.ref:
-                    ref_result = await session.execute(select(User).filter_by(id=ref_value))
-                    ref_user = ref_result.scalar()
-                    if ref_user:
-                        if str(ref_value) != str(user_id):
-                            existing_user.ref = ref_value
-                            await session.commit()
-                            res, msg = await self.increment_invites(ref_value)
-                            if res:
-                                return res, msg
-                            return False, "Invite Ezafe Nashod"
-                        return False, "You cannot register yourself as a referral."
-                    return False, "The referral user is not valid."
+        from sqlalchemy import func, update
+
+        user_id, ref_value = int(user_id), int(ref_value)
+        if user_id == ref_value:
+            return False, "You cannot register yourself as a referral."
+        async with Session() as session, session.begin():
+            user = await session.scalar(select(User).where(User.id == user_id).with_for_update())
+            if not user:
+                return False, "There is no user."
+            if user.ref:
                 return False, "The referral has already been registered."
-            return False, "There is no user."
+            referrer = await session.get(User, ref_value)
+            if not referrer:
+                return False, "The referral user is not valid."
+            user.ref = ref_value
+            await session.execute(
+                update(User).where(User.id == ref_value).values(invite=func.coalesce(User.invite, 0) + 1)
+            )
+            return True, "Referral registered."
 
     async def get_referred_users(self, referrer_id):
         """Get all users referred by a specific user"""

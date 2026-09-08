@@ -25,7 +25,10 @@ def btn_cardtocard_settings(settings=None):
             Button.inline(text="💰 محدودیت کارت دستی", data="set_manual_limits"),
         ],
         [Button.inline(text="💰 محدودیت واریز ارزی", data="set_crypto_limits")],
-        [Button.inline(text="🏦 درگاه زرین‌پال", data="zarinpal_settings_menu"), Button.inline(text="⭐ پرداخت ستاره‌ای", data="stars_settings_menu")],
+        [
+            Button.inline(text="🏦 درگاه زرین‌پال", data="zarinpal_settings_menu"),
+            Button.inline(text="⭐ پرداخت ستاره‌ای", data="stars_settings_menu"),
+        ],
         [Button.inline(text="👥 زیرمجموعه‌گیری", data="referral_settings_menu")],
         [Button.inline(text="🏷 حداقل شارژ نمایندگی", data="set_reseller_min_wallet")],
         [Button.inline(text="🎁 تنظیمات بونوس", data="bonus_settings_menu")],
@@ -143,10 +146,9 @@ def gateway_settings_buttons(settings):
 
 def zarinpal_settings_buttons(settings):
     enabled_text = "✅ درگاه روشن" if settings and settings.zarinpal_mode else "❌ درگاه خاموش"
-    sandbox_text = (
-        "🧪 محیط آزمایشی (فعال)" if settings and settings.zarinpal_sandbox else "🌐 محیط اصلی (فعال)"
-    )
+    sandbox_text = "🧪 محیط آزمایشی (فعال)" if settings and settings.zarinpal_sandbox else "🌐 محیط اصلی (فعال)"
     return [
+        [Button.inline(text="🌐 آدرس بازگشت HTTPS", data="set_zarinpal_callback_url")],
         [Button.inline(text=enabled_text, data="toggle_zarinpal_mode")],
         [Button.inline(text="🔐 تنظیم مرچنت کد", data="set_zarinpal_merchant")],
         [Button.inline(text=sandbox_text, data="toggle_zarinpal_sandbox")],

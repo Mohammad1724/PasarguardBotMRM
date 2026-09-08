@@ -161,13 +161,11 @@ async def callback_backup(event: events.CallbackQuery.Event):
         return
 
     if data == "backup_restore_start":
+        from app.services.restore import OFFLINE_RESTORE_MESSAGE
+
         await event.answer()
-        await set_step(event.sender_id, states.RESTORE_WAITING_FILE_STEP)
-        await event.edit(
-            texts.RESTORE_WAITING_FILE,
-            buttons=keyboards.restore_waiting_buttons(),
-            parse_mode="md",
-        )
+        await clear_step(event.sender_id)
+        await event.edit(OFFLINE_RESTORE_MESSAGE, buttons=keyboards.menu_buttons(await _current_interval()))
         return
 
     if data == "backup_restore_confirm":

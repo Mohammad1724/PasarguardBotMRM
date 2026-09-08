@@ -9,14 +9,12 @@ table with arz = "STARS" (amount column stores the star count).
 from __future__ import annotations
 
 import contextlib
-import math
 import os
-import random
 
 from telethon import Button, events, functions, types
 
 from app import Kenzo
-from app.db.crud.cryptopayments import CryptoPaymentsCRUD, add_order_crypto_payment, count_pending_orders
+from app.db.crud.cryptopayments import CryptoPaymentsCRUD, count_pending_orders
 from app.db.crud.settings import SettingsManager
 from app.logger import LogType, get_logger
 from app.services.billing.direct_pay_flow import is_direct_pay_active
@@ -47,7 +45,7 @@ def _parse_stars_payload(payload: bytes | str | None) -> int | None:
         return None
     if not raw.startswith(STARS_PAYLOAD_PREFIX):
         return None
-    order = raw[len(STARS_PAYLOAD_PREFIX):]
+    order = raw[len(STARS_PAYLOAD_PREFIX) :]
     return int(order) if order.isdigit() else None
 
 
@@ -70,6 +68,7 @@ async def create_stars_invoice(event, *, amount_irt: int) -> None:
             max_amount=settings.stars_deposit_max,
         )
         return
+    await CryptoPaymentsCRUD().age_invoices()
     if await count_pending_orders(event.sender_id) >= 3:
         await event.respond(
             texts.PENDING_ORDERS_LIMIT,
@@ -78,8 +77,17 @@ async def create_stars_invoice(event, *, amount_irt: int) -> None:
         await set_step(event.sender_id, states.STEP_HOME)
         return
 
-    order = random.randint(55555, 999999)
-    stars = max(1, math.ceil(amount / rate))
+    stars = max(1, (amount + rate - 1) // rate)
+    crud = CryptoPaymentsCRUD()
+    await crud.age_invoices()
+    try:
+        payment = await crud.reserve_invoice(event.sender_id, "STARS", str(stars), amount)
+    except ValueError, RuntimeError:
+        await event.respond(texts.PENDING_ORDERS_LIMIT)
+        return
+    order = payment.order_id
+    if await is_direct_pay_active(event.sender_id) or await get_pending_for_user(event.sender_id):
+        await link_crypto_order(int(event.sender_id), int(order))
     description = texts.STARS_INVOICE_DESCRIPTION.format(amount=f"{amount:,}", stars=stars)
     media = types.InputMediaInvoice(
         title=texts.STARS_INVOICE_TITLE,
@@ -115,18 +123,7 @@ async def create_stars_invoice(event, *, amount_irt: int) -> None:
         parse_mode="html",
         buttons=await bhome_buttons(event.sender_id, "fa"),
     )
-    await add_order_crypto_payment(
-        order_id=order,
-        user_id=event.sender_id,
-        arz="stars",
-        amount=str(stars),
-        amount_irt=amount,
-        createtime=Time_Date()["stamp"],
-        msg_id=None,
-    )
-    if await is_direct_pay_active(event.sender_id) or await get_pending_for_user(event.sender_id):
-        await link_crypto_order(int(event.sender_id), int(order))
-        await clear_user(event.sender_id)
+    await clear_user(event.sender_id)
 
     log_text = (
         "#فاکتور_جدید_استارز\n"
@@ -158,14 +155,13 @@ async def stars_precheckout_handler(event: types.UpdateBotPrecheckoutQuery):
     """Answer Telegram's pre-checkout query for Stars invoices."""
     order_id = _parse_stars_payload(event.payload)
     valid = False
-    if order_id is not None:
-        payment = await CryptoPaymentsCRUD().get_by_order_id(order_id)
-        valid = bool(
-            payment
-            and (payment.arz or "").upper() == "STARS"
-            and payment.status == "Pending"
-            and int(payment.user_id) == int(event.user_id)
-        )
+    try:
+        if order_id is not None:
+            valid = await CryptoPaymentsCRUD().accept_stars_checkout(
+                order_id, int(event.user_id), int(event.total_amount), event.currency, query_id=int(event.query_id)
+            )
+    except Exception:
+        logger.exception("Stars checkout validation failed")
     try:
         await Kenzo(
             functions.messages.SetBotPrecheckoutResultsRequest(
@@ -178,18 +174,22 @@ async def stars_precheckout_handler(event: types.UpdateBotPrecheckoutQuery):
         logger.error("Failed to answer pre-checkout for order %s: %s", order_id, exc)
 
 
-async def confirm_stars_payment(order_id: int, stars_paid: int) -> bool:
+async def confirm_stars_payment(order_id: int, stars_paid: int, *, payer_id: int, charge_id: str) -> bool:
     settings = await SettingsManager().get_settings()
     crud = CryptoPaymentsCRUD()
     payment = await crud.get_by_order_id(order_id)
-    if not payment or (payment.arz or "").upper() != "STARS" or payment.status != "Pending":
+    if (
+        not payment
+        or (payment.arz or "").upper() != "STARS"
+        or payment.status not in ("Pending", "Processing", "Expired")
+    ):
         logger.warning("Stars payment for unknown/closed order %s", order_id)
         return False
     try:
-        stored_stars = int(float(payment.amount))
-    except (TypeError, ValueError):
+        stored_stars = int(payment.amount)
+    except TypeError, ValueError:
         stored_stars = -1
-    if stars_paid != stored_stars:
+    if stars_paid != stored_stars or payment.user_id != payer_id or not charge_id or len(charge_id) > 240:
         logger.error(
             "Stars amount mismatch order=%s paid=%s stored=%s — skipping auto credit",
             order_id,
@@ -204,15 +204,19 @@ async def confirm_stars_payment(order_id: int, stars_paid: int) -> bool:
         bonus_percent=settings.crypto_bonus_percent,
     )
     total_amount = int(payment.amount_irt) + bonus
-    approved = await crud.approve_and_credit(order_id, total_amount, int(Time_Date()["stamp"]))
+    approved = await crud.approve_and_credit(
+        order_id, total_amount, int(Time_Date()["stamp"]), payment_ref=f"stars:{charge_id}", user_id=payer_id
+    )
     if not approved:
         logger.warning("Stars payment already processed: order_id=%s", order_id)
         return False
     payment, new_amount = approved
 
     fulfilled = await try_fulfill_after_crypto_credit(int(order_id))
+    await maybe_pay_referral_reward(
+        int(payment.user_id), int(payment.amount_irt), source="stars", source_id=int(order_id)
+    )
     if not fulfilled:
-        await maybe_pay_referral_reward(int(payment.user_id), int(payment.amount_irt), source="stars")
         user_msg = texts.STARS_PAYMENT_SUCCESS.format(
             order=order_id,
             stars=stars_paid,
@@ -246,7 +250,13 @@ async def confirm_stars_payment(order_id: int, stars_paid: int) -> bool:
 
 async def stars_payment_sent_handler(event):
     """Handle MessageActionPaymentSentMe (successful Stars payment)."""
-    action = getattr(event.message, "action", None)
+    message = getattr(event, "message", None)
+    if not isinstance(message, types.MessageService) or getattr(message, "out", False):
+        return
+    peer = message.from_id or message.peer_id
+    if not isinstance(peer, types.PeerUser):
+        return
+    action = getattr(message, "action", None)
     if not isinstance(action, types.MessageActionPaymentSentMe):
         return
     if (action.currency or "").upper() != "XTR":
@@ -255,7 +265,9 @@ async def stars_payment_sent_handler(event):
     if order_id is None:
         return
     try:
-        await confirm_stars_payment(order_id, int(action.total_amount))
+        await confirm_stars_payment(
+            order_id, int(action.total_amount), payer_id=int(peer.user_id), charge_id=action.charge.id
+        )
     except Exception as exc:
         logger.error("Error processing Stars payment %s: %s", order_id, exc)
     raise events.StopPropagation
@@ -268,7 +280,7 @@ def register(client):
     )
     client.add_event_handler(
         stars_payment_sent_handler,
-        events.NewMessage(incoming=True, func=_stars_action_filter),
+        events.Raw(types.UpdateNewMessage),
     )
     client.add_event_handler(
         stars_precheckout_handler,

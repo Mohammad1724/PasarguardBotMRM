@@ -215,7 +215,7 @@ async def zarinpal_check_callback(event: events.CallbackQuery.Event):
     data = event.data.decode("utf-8")
     try:
         order_id = int(data.split(":")[1])
-    except (IndexError, ValueError):
+    except IndexError, ValueError:
         raise events.StopPropagation from None
 
     settings = await SettingsManager().get_settings()
@@ -223,7 +223,10 @@ async def zarinpal_check_callback(event: events.CallbackQuery.Event):
     if not payment or (payment.arz or "").upper() != "ZARINPAL":
         await event.answer(texts.ZARINPAL_NOT_FOUND, alert=True)
         raise events.StopPropagation
-    if payment.status != "Pending":
+    if int(payment.user_id) != int(event.sender_id):
+        await event.answer(texts.ZARINPAL_NOT_FOUND, alert=True)
+        raise events.StopPropagation
+    if payment.status not in ("Pending", "Reconcile", "Expired"):
         await event.answer(texts.ZARINPAL_CHECK_PENDING, alert=True)
         raise events.StopPropagation
 
@@ -231,10 +234,10 @@ async def zarinpal_check_callback(event: events.CallbackQuery.Event):
     from app.services.billing.gateways import zarinpal
 
     result = await zarinpal.verify_payment(
-        settings.zarinpal_merchant,
+        (payment.gateway_merchant or settings.zarinpal_merchant),
         int(payment.amount_irt),
         str(payment.amount),
-        sandbox=settings.zarinpal_sandbox,
+        sandbox=(payment.gateway_sandbox == "1" if payment.gateway_sandbox is not None else settings.zarinpal_sandbox),
     )
     if not result.ok:
         await event.answer(texts.ZARINPAL_CHECK_PENDING, alert=True)

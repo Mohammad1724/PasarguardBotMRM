@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.version import VERSIONS
 
+from .payments import payment_router
 from .webhook import webhook_router
 
 # Create FastAPI application
@@ -20,3 +21,6 @@ api_app = FastAPI(
 api_app.include_router(webhook_router, prefix="/api", tags=["Webhook"])
 
 __all__ = ["api_app"]
+
+
+api_app.include_router(payment_router, prefix="/api", tags=["Payments"])

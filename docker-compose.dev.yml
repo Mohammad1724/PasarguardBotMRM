@@ -1,0 +1,7 @@
+# Explicit opt-in local build. Never pull an old GHCR image over edited source.
+services:
+  bot:
+    build:
+      context: .
+    image: pasarguardbot-local:development
+    pull_policy: never

@@ -1,6 +1,6 @@
 """Service helpers for admin gift code management."""
 
-import random
+import secrets
 import string
 
 from app.db.crud.gift_codes import GiftCodeCRUD
@@ -9,7 +9,7 @@ from app.utils.formatting.dates import Time_Date
 
 def generate_gift_code(length: int = 8) -> str:
     alphabet = string.ascii_uppercase + string.digits
-    return "".join(random.choice(alphabet) for _ in range(length))
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 async def create_gift_with_log(code, type, value, max_uses, per_user_limit, expires_at, note) -> str:

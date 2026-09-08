@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, String
+from sqlalchemy import BigInteger, Column, Integer, String
 
 from app.db.base import Base
 
@@ -6,7 +6,7 @@ from app.db.base import Base
 class Transaction(Base):
     __tablename__ = "transactions"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, nullable=False)
     amount = Column(BigInteger, nullable=False)
     method = Column(String(20), nullable=False)  # manual or auto

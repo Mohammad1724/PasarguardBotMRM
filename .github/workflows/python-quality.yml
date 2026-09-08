@@ -23,8 +23,8 @@ jobs:
         with:
           python-version-file: pyproject.toml
 
-      - name: Sync Ruff (dev group only)
-        run: uv sync --frozen --only-group dev --no-install-project
+      - name: Sync locked runtime and test dependencies
+        run: uv sync --frozen
 
       - name: Ruff check
         run: uv run --no-sync ruff check
@@ -34,3 +34,37 @@ jobs:
 
       - name: Compile Python sources
         run: python -m compileall -q app main.py config.py
+
+      - name: Regression tests
+        run: uv run --no-sync pytest -q
+
+  mariadb-tests:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-retries=10
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: local-ci-only
+          MARIADB_DATABASE: pasarguard_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+      - run: uv sync --frozen
+      - name: Real database and concurrency regressions
+        env:
+          TEST_REDIS_URL: redis://127.0.0.1:6379
+          TEST_DATABASE_URL: mysql+asyncmy://root:local-ci-only@127.0.0.1:3306/pasarguard_test
+        run: uv run --no-sync pytest -q

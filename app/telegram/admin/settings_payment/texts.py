@@ -207,6 +207,7 @@ def zarinpal_settings_header(settings) -> str:
         "🏦 **تنظیمات درگاه زرین‌پال**\n\n"
         f"🔘 وضعیت: {status}\n"
         f"🔐 مرچنت کد: `{merchant}`\n"
+        f"🌐 آدرس بازگشت: `{settings.zarinpal_callback_url or 'تنظیم نشده'}`\n"
         f"🌍 محیط: {sandbox}\n"
         f"📉 حداقل: `{settings.zarinpal_deposit_min:,}` | 📈 حداکثر: `{settings.zarinpal_deposit_max:,}` تومان\n\n"
         "مرچنت کد را از پنل zarinpal.com دریافت کنید. برای تست، حالت آزمایشی را روشن کنید."

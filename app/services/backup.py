@@ -111,17 +111,29 @@ async def _run_mariadb_dump(conn: MysqlConnection, sql_path: Path) -> None:
     if conn.password:
         env["MYSQL_PWD"] = conn.password
 
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        err = (stderr or b"").decode("utf-8", errors="replace").strip() or "unknown dump error"
-        raise RuntimeError(f"Database dump failed: {err}")
-    await asyncio.to_thread(_write_sql_file, sql_path, stdout)
+    def open_output():
+        sql_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(sql_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        return os.fdopen(fd, "wb")
+
+    output = await asyncio.to_thread(open_output)
+    process = None
+    try:
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=output, stderr=asyncio.subprocess.PIPE, env=env)
+        _stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError("Database dump failed: " + (stderr or b"").decode(errors="replace")[-2000:])
+        await asyncio.to_thread(output.flush)
+        await asyncio.to_thread(os.fsync, output.fileno())
+    except BaseException:
+        if process and process.returncode is None:
+            process.kill()
+            await process.wait()
+        raise
+    finally:
+        await asyncio.to_thread(output.close)
+    if (await asyncio.to_thread(sql_path.stat)).st_size == 0:
+        raise RuntimeError("Database dump is empty")
 
 
 def _project_root() -> Path:
@@ -151,12 +163,13 @@ def _build_zip_sync(work_dir: Path, sql_path: Path, zip_path: Path) -> Path:
             zf.write(env_path, arcname=".env")
         else:
             logger.warning("%s .env not found — backup zip contains database only", LogTag.JOB)
+    os.chmod(zip_path, 0o600)
     return zip_path
 
 
 async def create_backup_zip(work_dir: Path) -> Path:
     conn = parse_mysql_url()
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     sql_path = work_dir / "database.sql"
     zip_path = work_dir / f"pasarguardbot-backup-{stamp}.zip"
 

@@ -76,28 +76,43 @@ async def main():
     bot_task = asyncio.create_task(run_telethon(stop_event=stop_event))
     logger.info("%s Starting Telegram bot", LogTag.BOOT)
 
-    await stop_event.wait()
-
-    if server:
-        server.should_exit = True
-
+    stop_task = asyncio.create_task(stop_event.wait())
+    tasks = [bot_task] + ([api_task] if api_task else [])
+    failure = None
     try:
-        await asyncio.wait_for(bot_task, timeout=10)
-    except TimeoutError:
-        bot_task.cancel()
+        done, _pending = await asyncio.wait([stop_task, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        if not stop_event.is_set():
+            for task in done:
+                if task is not stop_task:
+                    failure = task.exception() if not task.cancelled() else RuntimeError("Critical task cancelled")
+                    failure = failure or RuntimeError("Critical service exited unexpectedly")
+                    break
+    finally:
+        stop_event.set()
+        if server:
+            server.should_exit = True
+        stop_task.cancel()
+        _done, pending = await asyncio.wait(tasks, timeout=10)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(stop_task, *tasks, return_exceptions=True)
+        from app.db.base import engine
+        from app.db.redis import close_redis
+        from app.jobs.scheduler import scheduler
 
-    tasks_to_gather = [bot_task]
-    if api_task:
-        tasks_to_gather.append(api_task)
-
-    await asyncio.gather(*tasks_to_gather, return_exceptions=True)
-    logger.info("%s Shutdown complete", LogTag.BOOT)
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+        await close_redis()
+        await engine.dispose()
+        logger.info("%s Shutdown complete", LogTag.BOOT)
+    if failure:
+        raise failure
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt, SystemExit, asyncio.CancelledError:
+    except KeyboardInterrupt, asyncio.CancelledError:
         pass
     except RuntimeError as e:
         if "event loop stopped" not in str(e).lower():

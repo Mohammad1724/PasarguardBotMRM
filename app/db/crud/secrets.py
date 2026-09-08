@@ -45,10 +45,11 @@ class SecretsCRUD:
                             session.add(Secret(name=name, value=value))
                         else:
                             row.value = value
-                    _cache[name] = value
                     loaded[name] = value
 
                 await session.commit()
+                _cache.clear()
+                _cache.update(loaded)
         except SQLAlchemyError as e:
             log.error("Error ensuring secrets", exc_info=e)
             raise

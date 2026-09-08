@@ -54,5 +54,5 @@ def menu_text(interval_hours: int, channel_configured: bool) -> str:
         f"{interval_line}\n"
         f"{channel_line}\n\n"
         "📤 **بکاپ‌گیری:** فایل به کانال لاگ ارسال می‌شود.\n"
-        "📥 **ریستور:** فایل ZIP بکاپ را ارسال کنید."
+        "📥 **ریستور ایمن:** از دستور سرور استفاده کنید؛ ربات باید متوقف باشد."
     )

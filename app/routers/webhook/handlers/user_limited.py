@@ -2,9 +2,7 @@
 Handler for user_limited webhook event - data usage reached limit.
 """
 
-import asyncio
-
-from pasarguard import PasarguardAPI
+from httpx import HTTPStatusError
 from telethon import errors
 
 from app import Kenzo
@@ -14,6 +12,7 @@ from app.logger import LogType, get_logger
 from app.models.router_models import WebhookEvent
 from app.routers.webhook.helpers import find_service_by_username
 from app.services.billing.renewal import require_panel_userid
+from app.services.gifts import panel_call
 from app.services.panels.settings import panel_webhook_notifications_enabled
 from app.telegram.shared.utils.logging import send_log_message
 from app.utils.text.bot_texts import get_bot_text
@@ -39,25 +38,28 @@ async def handle_user_limited(event: WebhookEvent) -> None:
     if getattr(service, "is_test", False) is True:
         if panel:
             try:
-                api = PasarguardAPI(panel.base_url)
-                await api.remove_user_by_id(user_id=require_panel_userid(service), token=panel.cookie)
+                await panel_call(panel, "remove_user_by_id", user_id=require_panel_userid(service))
+            except HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
             except Exception as e:
                 logger.error(f"Failed to remove test service (volume exhausted) {service.username} from panel: {e}")
-        await ServiceCRUD().delete_service(service.code)
+                raise
         logger.info(f"Test service {service.username} (code {service.code}) removed immediately (volume exhausted)")
         try:
             await Kenzo.send_message(
                 service.id,
                 f"کانفیگ تست شما با نام **{service.username}** به دلیل اتمام حجم پاک شد.",
             )
-        except errors.FloodWaitError as e:
-            await asyncio.sleep(e.seconds)
+        except errors.FloodWaitError:
+            raise
         except errors.InputUserDeactivatedError:
             await set_user_status(service.id, "DeleteAccount")
         except errors.UserIsBlockedError:
             await set_user_status(service.id, "BlockedBot")
         except Exception as e:
             logger.error(f"Test service delete notify failed for {service.id}: {e}")
+            raise
         log_msg = (
             f"🧪 <b>کانفیگ تست پاک شد</b> (وب‌هوک: اتمام حجم)\n\n"
             f"◾️ کد سرویس: <code>{service.code}</code>\n"
@@ -66,6 +68,7 @@ async def handle_user_limited(event: WebhookEvent) -> None:
             f"◾️ پنل: {panel.name if panel else '—'}"
         )
         await send_log_message(LogType.OTHER, message=log_msg, parse_mode="html")
+        await ServiceCRUD().delete_service(service.code)
         return
 
     if event.user.data_limit and event.user.used_traffic >= event.user.data_limit:
@@ -93,6 +96,7 @@ async def handle_user_limited(event: WebhookEvent) -> None:
 
         except errors.FloodWaitError as e:
             logger.warning(f"FloodWait error for user {service.id}: {e}")
+            raise
 
         except errors.InputUserDeactivatedError:
             logger.warning(f"User {service.id} is deactivated")
@@ -104,6 +108,6 @@ async def handle_user_limited(event: WebhookEvent) -> None:
 
         except Exception as e:
             logger.error(f"Failed to send data exhaustion notification to user {service.id}: {e}")
-        finally:
-            # Prevent cron check_low_volume from re-sending every minute
-            await service_crud.update_service(service.code, low_volume_notified=True)
+            raise
+        # Only mark after success or a permanent recipient error.
+        await service_crud.update_service(service.code, low_volume_notified=True)

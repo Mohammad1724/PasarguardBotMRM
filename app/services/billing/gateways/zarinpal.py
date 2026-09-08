@@ -25,7 +25,9 @@ VERIFY_ALREADY = 101
 
 
 class ZarinpalResult:
-    def __init__(self, ok: bool, code: int = 0, message: str = "", authority: str = "", ref_id: str = "", url: str = ""):
+    def __init__(
+        self, ok: bool, code: int = 0, message: str = "", authority: str = "", ref_id: str = "", url: str = ""
+    ):
         self.ok = ok
         self.code = code
         self.message = message
@@ -74,14 +76,22 @@ async def request_payment(
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
             response = await client.post(f"{base}{REQUEST_PATH}", json=payload)
+            response.raise_for_status()
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("Invalid gateway response")
     except Exception as exc:
         logger.error("ZarinPal request error: %s", exc)
         return ZarinpalResult(False, message=f"gateway_unreachable: {exc}")
 
     body = data.get("data") or {}
+    if not isinstance(body, dict):
+        return ZarinpalResult(False, message="invalid_gateway_response")
     errors = data.get("errors") or {}
-    code = int(body.get("code") or 0)
+    try:
+        code = int(body.get("code") or 0)
+    except TypeError, ValueError:
+        return ZarinpalResult(False, message="invalid_gateway_code")
     if code == REQUEST_OK and body.get("authority"):
         authority = str(body["authority"])
         return ZarinpalResult(True, code=code, authority=authority, url=f"{base}/pg/StartPay/{authority}")
@@ -90,7 +100,7 @@ async def request_payment(
     if isinstance(errors, dict):
         message = str(errors.get("message") or errors.get("code") or message)
     elif isinstance(errors, list) and errors:
-        first = errors[0] or {}
+        first = errors[0] if isinstance(errors[0], dict) else {}
         message = str(first.get("message") or first.get("code") or message)
     logger.warning("ZarinPal request failed: code=%s message=%s", code, message)
     return ZarinpalResult(False, code=code, message=message)
@@ -115,14 +125,22 @@ async def verify_payment(
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
             response = await client.post(f"{base}{VERIFY_PATH}", json=payload)
+            response.raise_for_status()
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("Invalid gateway response")
     except Exception as exc:
         logger.error("ZarinPal verify error: %s", exc)
         return ZarinpalResult(False, message=f"gateway_unreachable: {exc}")
 
     body = data.get("data") or {}
+    if not isinstance(body, dict):
+        return ZarinpalResult(False, message="invalid_gateway_response")
     errors = data.get("errors") or {}
-    code = int(body.get("code") or 0)
+    try:
+        code = int(body.get("code") or 0)
+    except TypeError, ValueError:
+        return ZarinpalResult(False, message="invalid_gateway_code")
     if code in (VERIFY_OK, VERIFY_ALREADY):
         ref_id = str(body.get("ref_id") or "")
         return ZarinpalResult(True, code=code, ref_id=ref_id, authority=authority)
@@ -131,6 +149,6 @@ async def verify_payment(
     if isinstance(errors, dict):
         message = str(errors.get("message") or errors.get("code") or message)
     elif isinstance(errors, list) and errors:
-        first = errors[0] or {}
+        first = errors[0] if isinstance(errors[0], dict) else {}
         message = str(first.get("message") or first.get("code") or message)
     return ZarinpalResult(False, code=code, message=message)

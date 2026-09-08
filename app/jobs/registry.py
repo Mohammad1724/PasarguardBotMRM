@@ -15,8 +15,10 @@ def register_all_jobs() -> None:
     if _JOBS_REGISTERED:
         return
 
+    from app.db.crud.cryptopayments import age_online_invoices
     from app.jobs.backup import bootstrap_backup_job, register_backup_job_placeholder
     from app.jobs.panels.cleanup import get_cookies
+    from app.jobs.payments.stars import reconcile_stars
     from app.jobs.payments.transactions import (
         auto_confirm_job,
         ton_checking,
@@ -28,9 +30,13 @@ def register_all_jobs() -> None:
     from app.jobs.reseller.billing import run_reseller_billing
     from app.jobs.services.expiration import handle_service_expiration
     from app.jobs.services.low_volume import check_low_volume
+    from app.jobs.webhooks import prune_webhook_deliveries
 
     now = datetime.now()
     job_defs = [
+        (prune_webhook_deliveries, "interval", {"hours": 24}, "prune_webhook_deliveries"),
+        (reconcile_stars, "interval", {"minutes": 5}, "reconcile_stars"),
+        (age_online_invoices, "interval", {"seconds": 60}, "age_online_invoices"),
         (handle_service_expiration, "interval", {"seconds": 60}, "service_expiration_handler"),
         (check_low_volume, "interval", {"seconds": 60}, "check_low_volume"),
         (get_cookies, "interval", {"hours": 5}, "get_cookies"),

@@ -18,5 +18,5 @@ async def handle_user_created(event: WebhookEvent) -> None:
             f"   Data Limit: {event.user.data_limit} bytes" if event.user.data_limit else "   Data Limit: Unlimited"
         )
         logger.info(f"   Expire: {event.user.expire}" if event.user.expire else "   Expire: Never")
-        logger.info(f"   Subscription URL: {event.user.subscription_url}" if event.user.subscription_url else "")
+        logger.debug("Subscription URL present: %s", bool(event.user.subscription_url))
     # TODO: Add your custom logic here (e.g., send notification, update database, etc.)

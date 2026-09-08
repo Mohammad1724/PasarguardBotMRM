@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import Any
 
 from app.logger import get_logger
@@ -10,22 +12,29 @@ from config import REDIS_URL
 logger = get_logger(__name__)
 
 redis_client: Any | None = None
+_connection_lock = asyncio.Lock()
 
 
 async def get_redis():
     """Return the shared async Redis client, or None if unavailable."""
     global redis_client
-    if redis_client is not None:
-        return redis_client
-    try:
-        from redis.asyncio import Redis
+    async with _connection_lock:
+        candidate = redis_client
+        try:
+            if candidate is None:
+                from redis.asyncio import Redis
 
-        redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
-        await redis_client.ping()
-        return redis_client
-    except Exception as exc:
-        logger.warning("Redis unavailable: %s", exc)
-        return None
+                candidate = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=3, socket_timeout=5)
+            await candidate.ping()
+            redis_client = candidate
+            return candidate
+        except Exception as exc:
+            redis_client = None
+            if candidate is not None:
+                with contextlib.suppress(Exception):
+                    await candidate.aclose()
+            logger.warning("Redis unavailable: %s", exc)
+            return None
 
 
 async def close_redis() -> None:

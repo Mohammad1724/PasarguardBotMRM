@@ -1,6 +1,6 @@
-from decouple import Config, RepositoryEnv
+from decouple import AutoConfig
 
-config = Config(RepositoryEnv(".env"))
+config = AutoConfig(search_path=".")
 
 # --- Logging (app.logger.setup.init_logging / get_logger) ---
 LOG_LEVEL = config("LOG_LEVEL", default="INFO")

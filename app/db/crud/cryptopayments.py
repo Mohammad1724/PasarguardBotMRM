@@ -1,8 +1,12 @@
-from sqlalchemy import Float, cast, func
-from sqlalchemy.exc import SQLAlchemyError
+import secrets
+import time
+
+from sqlalchemy import Float, cast, func, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.future import select
 
 from app.db.base import AsyncSessionLocal as Session
+from app.db.crud.settings import SettingsManager
 from app.db.models.cryptopayments import CryptoPayments
 from app.db.models.user import User
 
@@ -13,9 +17,19 @@ class CryptoPaymentsCRUD:
     async def get_pending_by_arz(self, arz: str):
         try:
             async with Session() as session:
-                result = await session.execute(
-                    select(CryptoPayments).filter(CryptoPayments.status == "Pending", CryptoPayments.arz == arz.upper())
+                stmt = select(CryptoPayments).where(
+                    CryptoPayments.status.in_(
+                        ("Pending", "Reconcile", "Expired") if arz.upper() == "ZARINPAL" else ("Pending",)
+                    ),
+                    CryptoPayments.arz == arz.upper(),
                 )
+                if arz.upper() == "ZARINPAL":
+                    stmt = (
+                        stmt.where(CryptoPayments.next_check_at <= int(time.time()))
+                        .order_by(CryptoPayments.next_check_at)
+                        .limit(25)
+                    )
+                result = await session.execute(stmt)
                 return result.scalars().all()
         except SQLAlchemyError:
             return []
@@ -45,9 +59,27 @@ class CryptoPaymentsCRUD:
             return None
 
     async def expire_payment(self, order_id: int):
-        return await self.update_payment_status(order_id, "Expired")
+        async with Session() as session, session.begin():
+            result = await session.execute(
+                update(CryptoPayments)
+                .where(CryptoPayments.order_id == order_id, CryptoPayments.status == "Pending")
+                .values(status="Expired")
+            )
+            return bool(result.rowcount)
 
-    async def approve_and_credit(self, order_id: int, total_amount: int, paytime: int | None = None):
+    async def approve_and_credit(
+        self,
+        order_id: int,
+        total_amount: int,
+        paytime: int | None = None,
+        *,
+        payment_ref: str | None = None,
+        gateway_ref_id: str | None = None,
+        user_id: int | None = None,
+    ):
+        settings = await SettingsManager().get_settings()
+        if settings is None:
+            raise RuntimeError("Payment settings unavailable; retry after recovery")
         try:
             async with Session() as session, session.begin():
                 payment_stmt = select(CryptoPayments).where(CryptoPayments.order_id == order_id)
@@ -55,8 +87,16 @@ class CryptoPaymentsCRUD:
                 if dialect and dialect.name != "sqlite":
                     payment_stmt = payment_stmt.with_for_update()
                 payment = (await session.execute(payment_stmt)).scalar_one_or_none()
-                if not payment or payment.status != "Pending":
+                if not payment:
                     return None
+                allowed = ("Pending", "Processing", "Expired", "Reconcile") if payment_ref else ("Pending",)
+                if payment.status not in allowed or (user_id is not None and int(payment.user_id) != user_id):
+                    return None
+                if total_amount <= 0:
+                    return None
+                if payment_ref:
+                    payment.payment_ref = payment_ref
+                    payment.gateway_ref_id = gateway_ref_id
 
                 user_stmt = select(User).where(User.id == payment.user_id)
                 if dialect and dialect.name != "sqlite":
@@ -69,9 +109,142 @@ class CryptoPaymentsCRUD:
                 payment.status = "Paid"
                 if paytime:
                     payment.paytime = paytime
+                from app.services.billing.referral_ledger import credit_referral
+
+                await session.flush()
+                await credit_referral(session, user, int(payment.amount_irt), f"crypto:{order_id}", settings)
                 return payment, int(user.amount or 0)
         except SQLAlchemyError:
             return None
+
+    async def reserve_invoice(
+        self,
+        user_id: int,
+        arz: str,
+        amount: str,
+        amount_irt: int,
+        *,
+        merchant: str | None = None,
+        sandbox: bool | None = None,
+    ):
+        """Persist before exposing a payable invoice. Serialize the per-user order limit."""
+        if int(amount_irt) <= 0:
+            raise ValueError("Invoice amount must be positive")
+        for _ in range(3):
+            try:
+                async with Session() as session, session.begin():
+                    user = await session.scalar(select(User).where(User.id == user_id).with_for_update())
+                    if not user:
+                        raise ValueError("User not found")
+                    count = await session.scalar(
+                        select(func.count())
+                        .select_from(CryptoPayments)
+                        .where(
+                            CryptoPayments.user_id == user_id,
+                            CryptoPayments.status.in_(("Pending", "Creating", "Processing")),
+                        )
+                    )
+                    if int(count or 0) >= 3:
+                        raise ValueError("Too many pending invoices")
+                    payment = CryptoPayments(
+                        order_id=secrets.randbits(62) + 1,
+                        user_id=user_id,
+                        arz=arz.upper(),
+                        amount=amount,
+                        amount_irt=amount_irt,
+                        createtime=int(time.time()),
+                        status="Creating" if arz.upper() == "ZARINPAL" else "Pending",
+                        gateway_merchant=merchant,
+                        gateway_sandbox=None if sandbox is None else str(int(sandbox)),
+                    )
+                    session.add(payment)
+                    await session.flush()
+                    return payment
+            except IntegrityError:
+                continue
+        raise RuntimeError("Could not reserve a unique invoice")
+
+    async def has_unpaid_stars(self) -> bool:
+        async with Session() as session:
+            return (
+                await session.scalar(
+                    select(CryptoPayments.order_id)
+                    .where(
+                        CryptoPayments.arz == "STARS", CryptoPayments.status.in_(("Pending", "Processing", "Expired"))
+                    )
+                    .limit(1)
+                )
+            ) is not None
+
+    async def schedule_gateway_retry(self, payment):
+        age = int(time.time()) - payment.createtime
+        delay = 60 if age < 1800 else (3600 if age < 7 * 86400 else 86400)
+        async with Session() as session, session.begin():
+            await session.execute(
+                update(CryptoPayments)
+                .where(CryptoPayments.order_id == payment.order_id)
+                .values(next_check_at=int(time.time()) + delay)
+            )
+
+    async def set_gateway_authority(self, order_id: int, authority: str) -> None:
+        async with Session() as session, session.begin():
+            result = await session.execute(
+                update(CryptoPayments)
+                .where(CryptoPayments.order_id == order_id, CryptoPayments.status == "Creating")
+                .values(amount=authority, status="Pending")
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("Gateway invoice was not reserved")
+
+    async def accept_stars_checkout(
+        self, order_id: int, user_id: int, amount: int, currency: str, query_id: int | None = None
+    ) -> bool:
+        if currency != "XTR" or amount <= 0:
+            return False
+        async with Session() as session, session.begin():
+            row = await session.scalar(
+                select(CryptoPayments).where(CryptoPayments.order_id == order_id).with_for_update()
+            )
+            if not row or row.arz != "STARS" or row.status not in ("Pending", "Processing"):
+                return False
+            if row.user_id != user_id or str(amount) != row.amount or row.createtime < int(time.time()) - 1800:
+                return False
+            if row.status == "Processing" and row.checkout_query_id != query_id:
+                return False
+            row.checkout_query_id = query_id
+            row.status = "Processing"
+            return True
+
+    async def age_invoices(self) -> None:
+        now = int(time.time())
+        async with Session() as session, session.begin():
+            await session.execute(
+                update(CryptoPayments)
+                .where(
+                    CryptoPayments.arz == "STARS",
+                    CryptoPayments.status.in_(("Pending", "Processing")),
+                    CryptoPayments.createtime < now - 1800,
+                )
+                .values(status="Expired")
+            )
+            await session.execute(
+                update(CryptoPayments)
+                .where(
+                    CryptoPayments.arz == "ZARINPAL",
+                    CryptoPayments.status == "Pending",
+                    CryptoPayments.createtime < now - 1800,
+                )
+                .values(status="Reconcile")
+            )
+            await session.execute(
+                update(CryptoPayments)
+                .where(CryptoPayments.status == "Creating", CryptoPayments.createtime < now - 1800)
+                .values(status="Failed")
+            )
+
+
+async def age_online_invoices():
+    await CryptoPaymentsCRUD().age_invoices()
 
 
 async def add_order_crypto_payment(order_id, user_id, arz, amount, amount_irt, createtime, msg_id=None):

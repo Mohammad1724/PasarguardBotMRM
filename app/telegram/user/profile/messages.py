@@ -55,12 +55,15 @@ async def _build_profile_message(user_id: int, info) -> str:
     referral_section = await _build_referral_section(user_id, info)
     if info.number is None:
         info.number = states.PHONE_NOT_REGISTERED
-    return texts.profile_message(
-        user_id,
-        info,
-        date_message["jf"],
-        discount_status,
-    ) + referral_section
+    return (
+        texts.profile_message(
+            user_id,
+            info,
+            date_message["jf"],
+            discount_status,
+        )
+        + referral_section
+    )
 
 
 async def menu_profile_filter(event):

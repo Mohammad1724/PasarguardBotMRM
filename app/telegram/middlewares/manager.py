@@ -46,6 +46,7 @@ class MiddlewareManager:
                     pipeline,
                     ctx.user_id,
                 )
+                raise StopPipeline from None
 
     async def run_after(
         self,

@@ -12,15 +12,13 @@ from app.db.crud.gift_codes import (
     REDEEM_EXPIRED,
     REDEEM_INACTIVE,
     REDEEM_NOT_FOUND,
-    REDEEM_OK,
     REDEEM_USER_LIMIT,
     GiftCodeCRUD,
 )
 from app.db.crud.panels import PanelsManager
 from app.db.crud.services import ServiceCRUD
 from app.db.crud.settings import SettingsManager
-from app.db.crud.transactions import TransactionCRUD
-from app.db.crud.user import UserCRUD, update_Money
+from app.db.crud.user import UserCRUD
 from app.logger import LogType, get_logger
 from app.telegram.shared.guards.channel_gate import ensure_channel_membership
 from app.telegram.shared.utils.maintenance import bot_is_offline
@@ -88,71 +86,52 @@ async def gift_code_input_handler(event: Message):
         await set_step(event.sender_id, "home")
         raise events.StopPropagation
 
-    status, gift = await GiftCodeCRUD().redeem(msg, event.sender_id)
-    if status != REDEEM_OK:
-        alert = _STATUS_ALERTS.get(status, texts.GIFT_INVALID)
-        await event.respond(alert)
-        raise events.StopPropagation
+    import uuid
 
+    from app.services.gifts import get_unfinished_gift, reserve_gift
+
+    settings = await SettingsManager().get_settings()
+    if not settings or not settings.gift_mode:
+        await event.respond(texts.GIFT_INACTIVE)
+        raise events.StopPropagation
+    gift = await GiftCodeCRUD().get_by_code(msg)
+    unfinished = await get_unfinished_gift(gift.code, event.sender_id) if gift else None
+    if not gift or (not gift.is_active and not unfinished):
+        await event.respond(texts.GIFT_INVALID)
+        raise events.StopPropagation
+    request_id = unfinished.request_id if unfinished else uuid.uuid4().hex
     if gift.type == "balance":
-        new_balance = await update_Money(user_id=event.sender_id, Money=int(gift.value))
-        await TransactionCRUD().create(
-            user_id=event.sender_id,
-            amount=int(gift.value),
-            method="gift",
-            status="approved",
-        )
+        try:
+            _use, balance = await reserve_gift(gift.code, event.sender_id, request_id)
+        except ValueError as exc:
+            await event.respond(str(exc))
+            raise events.StopPropagation from None
         await event.respond(
-            texts.GIFT_BALANCE_DONE.format(code=gift.code, value=int(gift.value), balance=int(new_balance or 0)),
-            parse_mode="md",
+            texts.GIFT_BALANCE_DONE.format(code=gift.code, value=int(gift.value), balance=balance), parse_mode="md"
         )
-        await _log_redeem(gift, event.sender_id, None, "کیف پول")
         await _finish(event)
         raise events.StopPropagation
 
-    # days / volume — remember pending code and ask the user to pick a service
     services = await ServiceCRUD().get_services_reverse(event.sender_id)
     services = [s for s in services if s.in_panel and not getattr(s, "is_test", False)][:20]
-    if not services:
-        await event.respond(texts.GIFT_NO_SERVICES)
-        # refund the use so the code is not wasted
-        await _refund_use(gift, event.sender_id)
-        await _finish(event)
-        raise events.StopPropagation
-
-
-    await set_data(event.sender_id, "gift_pending", gift.code)
     buttons = []
     for service in services:
-        panel = await PanelsManager().get_panel_by_code(service.in_panel) if service.in_panel else None
-        label = f"{service.username} ({panel.remark})" if panel else service.username
-        buttons.append(
-            [Button.inline(label, f"{GIFT_REDEEM_CALLBACK_PREFIX}{gift.code}:{service.code}")]
-        )
-    await event.respond(
-        "لطفاً کانفیگ موردنظر برای اعمال کد را انتخاب کنید:",
-        buttons=buttons,
-    )
+        if unfinished and str(service.code) != unfinished.service_code:
+            continue
+        panel = await PanelsManager().get_panel_by_code(service.in_panel)
+        if panel:
+            buttons.append(
+                [Button.inline(f"{service.username} ({panel.name})", f"giftapply:{request_id}:{service.code}")]
+            )
+    if not buttons:
+        await event.respond(texts.GIFT_NO_SERVICES)
+        await _finish(event)
+        raise events.StopPropagation
+    # No consumption until a service is selected and validated.
+    await set_data(event.sender_id, "gift_pending", {"code": gift.code, "request_id": request_id})
+    await event.respond("لطفاً سرویس موردنظر را انتخاب کنید:", buttons=buttons)
     await set_step(event.sender_id, "gift_service_pick")
     raise events.StopPropagation
-
-
-async def _refund_use(gift, user_id: int) -> None:
-    from sqlalchemy import delete
-
-    from app.db.base import AsyncSessionLocal as Session
-    from app.db.models.gift_codes import GiftCodeUse
-
-    try:
-        async with Session() as session, session.begin():
-            await session.execute(
-                delete(GiftCodeUse).where(
-                    GiftCodeUse.code_id == gift.id,
-                    GiftCodeUse.user_id == user_id,
-                )
-            )
-    except Exception as exc:
-        logger.warning("gift refund_use failed: %s", exc)
 
 
 async def _finish(event) -> None:

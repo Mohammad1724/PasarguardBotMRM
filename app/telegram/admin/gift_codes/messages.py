@@ -31,7 +31,13 @@ async def message_handler_gift_admin(event: Message):
         raise events.StopPropagation
 
     if step == "gift_manual_code":
-        code = msg.strip().upper()
+        from app.services.gifts import validate_code
+
+        try:
+            code = validate_code(msg)
+        except ValueError as exc:
+            await event.respond(str(exc))
+            raise events.StopPropagation from None
         if await GiftCodeCRUD().get_by_code(code):
             await event.respond("❌ این کد قبلاً ثبت شده است. کد دیگری انتخاب کنید:", buttons=keyboards.gift_back_row())
             raise events.StopPropagation
@@ -42,8 +48,7 @@ async def message_handler_gift_admin(event: Message):
 
     if step in ("gift_value_balance", "gift_value_days", "gift_value_volume") and msg.isdigit():
         value = int(msg)
-        gtype = {"gift_value_balance": "balance", "gift_value_days": "days", "gift_value_volume": "volume"}[step]
-        if gtype == "balance" and value <= 0:
+        if value <= 0:
             await event.respond("مقدار باید بزرگ‌تر از صفر باشد:", buttons=keyboards.gift_back_row())
             raise events.StopPropagation
         await set_data(event.sender_id, "gift_value", value)
@@ -74,7 +79,7 @@ async def message_handler_gift_admin(event: Message):
 
     if step == "gift_note":
         await set_data(event.sender_id, "gift_note", msg or None)
-        code = await get_data(event.sender_id, "gift_code") or await service.generate_gift_code()
+        code = await get_data(event.sender_id, "gift_code") or service.generate_gift_code()
         expires_at = await get_data(event.sender_id, "gift_expires_at")
         gift_code = await service.create_gift_with_log(
             code=code,
