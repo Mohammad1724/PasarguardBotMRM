@@ -38,6 +38,12 @@ jobs:
       - name: Regression tests
         run: uv run --no-sync pytest -q
 
+      - name: Mini App Nginx and TLS smoke
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nginx openssl
+          uv run --no-sync python tests/integration/miniapp_nginx_smoke.py
+
   mariadb-tests:
     runs-on: ubuntu-latest
     services:

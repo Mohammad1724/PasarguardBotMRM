@@ -35,6 +35,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMR
 
 بعد از نصب: `pasarguardbot`
 
+### راه‌اندازی ساده مینی‌اپ نسخه سوم
+
+در نصب Docker نسخه سوم روی Debian/Ubuntu، با مدیر جدید فقط دامنه را وارد کنید:
+
+```bash
+sudo pasarguardbot miniapp
+```
+
+مدیر قدیمی ابتدا `sudo env PASARGUARDBOT_BRANCH=main pasarguardbot update-script` می‌خواهد. HTTPS موجود سازگار استفاده می‌شود یا گواهی Let's Encrypt و تمدید خودکار آماده می‌شوند؛ DNS باید از قبل به سرور برسد. [فرمان مستقل یک‌مرحله‌ای، پیش‌نیازها و محدودیت‌های ایمنی](MINIAPP_SETUP.fa.md).
+
 ### ریستور بکاپ
 
 ```bash

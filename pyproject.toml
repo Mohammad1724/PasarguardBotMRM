@@ -47,6 +47,9 @@ exclude = [
     "app/db/migrations",
 ]
 
+[tool.ruff.per-file-target-version]
+"scripts/setup_miniapp.py" = "py310"
+
 [tool.ruff.lint]
 select = [
     "E",      # pycodestyle errors
