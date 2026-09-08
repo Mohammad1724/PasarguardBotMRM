@@ -115,7 +115,15 @@ def main():
                         if process.poll() is not None or attempt == 49:
                             raise
                         time.sleep(0.05)
-                for path in ("/admin", "/admin/", "/admin/api/me", "/admin/assets/app.js"):
+                for path in (
+                    "/admin",
+                    "/admin/",
+                    "/admin/api/me",
+                    "/admin/assets/app.js",
+                    "/admin/account",
+                    "/admin/account/api/me",
+                    "/admin/account/assets/app.js",
+                ):
                     with get(path) as response:
                         data = json.load(response)
                         assert data == {"path": path, "host": f"admin.example.com:{tls_port}", "proto": "https"}
@@ -141,7 +149,7 @@ def main():
                 else:
                     raise AssertionError("Request size limit missing")
                 print(
-                    "PASS: real Nginx syntax, trusted local TLS on a generated custom port, proof endpoint, four proxy paths with Host port preserved, custom-port HTTP redirect, HTTP ACME path and 64KiB limit"
+                    "PASS: real Nginx syntax, trusted local TLS on a generated custom port, proof endpoint, admin and customer proxy paths with Host port preserved, custom-port HTTP redirect, HTTP ACME path and 64KiB limit"
                 )
             finally:
                 process.terminate()

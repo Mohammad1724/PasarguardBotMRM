@@ -16,6 +16,7 @@ from app.db.models.panels import Panels
 from app.db.models.plans import Plan
 from app.db.models.services import Service
 from app.db.models.settings import SETTINGS_SECTION_DEFAULTS, Settings, resolve_settings_update_kwargs
+from app.db.models.transaction import Transaction
 from app.db.models.user import User
 from app.services.admin_app.auth import PERMISSIONS, fail, require
 from app.telegram.keyboards.registry import (
@@ -56,6 +57,10 @@ def fingerprint(value):
 
 
 def permission(actor, entity, target):
+    if entity == "wallet":
+        if not actor["owner"]:
+            fail(403, "تغییر موجودی فقط برای مالک ربات مجاز است.")
+        return
     if entity == "grants":
         if not actor["owner"]:
             fail(403, "فقط مالک می‌تواند دسترسی بدهد.")
@@ -160,6 +165,11 @@ async def snapshot(session, entity, target, *, lock=False):
     if entity == "grants":
         row = await session.get(AdminGrant, int(target), with_for_update=lock)
         return {"name": row.name if row else "ادمین", "permissions": row.permissions if row else []}
+    if entity == "wallet":
+        row = await session.get(User, int(target), with_for_update=lock)
+        if not row:
+            fail(404, "کاربر پیدا نشد.")
+        return {"amount": str(row.amount or 0), "currency": "IRT"}
     if entity == "users":
         row = await session.get(User, int(target), with_for_update=lock)
         if not row:
@@ -337,6 +347,25 @@ async def validate(session, entity, target, data, before, actor):
             if view in PERMISSIONS:
                 permissions.add(view)
         return {"name": label(data.get("name"), 60), "permissions": sorted(permissions)}
+    if entity == "wallet":
+        fields(data, ("amount", "currency"))
+        amount = data.get("amount")
+        if (
+            not isinstance(amount, str)
+            or not amount.isascii()
+            or not amount.isdecimal()
+            or len(amount) > 19
+            or not 0 <= int(amount) <= 2**63 - 1
+            or data.get("currency", "IRT") != "IRT"
+        ):
+            fail(422, "موجودی باید عدد صحیح نامنفی به تومان باشد؛ آن را به صورت رشته عددی ارسال کنید.")
+        delta = int(amount) - int(before["amount"])
+        if not delta or not -(2**63) <= delta <= 2**63 - 1:
+            fail(422, "موجودی تغییری نکرده یا اختلاف خارج از محدوده تراکنش است.")
+        user = await session.get(User, int(target))
+        if not user or user.status == "DeleteAccount":
+            fail(422, "حساب حذف‌شده قابل تغییر موجودی نیست.")
+        return {"amount": str(int(amount)), "currency": "IRT"}
     if entity == "users":
         fields(data, ("status",))
         if int(target) in ADMIN_ID or int(target) == actor["id"]:
@@ -428,6 +457,28 @@ async def apply(session, entity, target, data, actor, now):
             session.add(row)
         row.name, row.permissions, row.updated_at = data["name"], data["permissions"], now
         row.revision = (row.revision or 0) + 1
+    elif entity == "wallet":
+        # publish() holds the User row lock and commits this with AdminChange.
+        user = await session.get(User, int(target), with_for_update=True)
+        before = int(user.amount or 0)
+        after = int(data["amount"])
+        user.amount = after
+        transaction = Transaction(
+            user_id=user.id,
+            amount=after - before,
+            method="admin_adjustment",
+            status="approved",
+            created_at=now,
+            completed_at=now,
+        )
+        session.add(transaction)
+        await session.flush()
+        return {
+            "balance_before": str(before),
+            "balance_after": str(after),
+            "delta": str(after - before),
+            "transaction_id": str(transaction.id),
+        }
     elif entity == "users":
         (await session.get(User, int(target))).status = data["status"]
     elif entity == "tickets":

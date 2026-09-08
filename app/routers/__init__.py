@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.version import VERSIONS
 
 from .admin_app import router as admin_app_router
+from .customer_app import router as customer_app_router
 from .payments import payment_router
 from .webhook import webhook_router
 
@@ -28,6 +29,7 @@ api_app.include_router(payment_router, prefix="/api", tags=["Payments"])
 
 
 api_app.include_router(admin_app_router)
+api_app.include_router(customer_app_router)
 
 
 @api_app.middleware("http")

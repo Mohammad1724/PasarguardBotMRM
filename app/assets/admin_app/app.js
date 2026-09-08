@@ -210,7 +210,9 @@ async function api(path, body) {
   }
   if (!r.ok) {
     if (r.status === 401) S.token = null;
-    throw Error(d.detail || "عملیات انجام نشد.");
+    const error = Error(d.detail || "عملیات انجام نشد.");
+    error.status = r.status;
+    throw error;
   }
   return d;
 }
@@ -388,6 +390,7 @@ function entityTitle(e) {
       settings: "تنظیمات",
       grants: "دسترسی ادمین",
       users: "وضعیت کاربر",
+      wallet: "موجودی کیف پول",
       services: "تمدید خودکار",
       tickets: "تیکت",
     }[e] || e
@@ -414,9 +417,13 @@ async function review(value, reason) {
 }
 function showDraft(d) {
   S.draft = d;
+  const wallet = d.entity === "wallet";
+  const preview = wallet
+    ? `<div class="diff"><div><label>موجودی فعلی</label><h2>${fa(d.before.amount)} <small>تومان</small></h2></div><div><label>موجودی جدید</label><h2>${fa(d.after.amount)} <small>تومان</small></h2></div></div><p class="note">اختلاف موجودی: <strong>${fa(BigInt(d.after.amount) - BigInt(d.before.amount))} تومان</strong><br>دلیل: ${esc(d.reason)}</p>`
+    : `<div class="diff"><div><label>قبل از تغییر</label><pre>${esc(JSON.stringify(d.before, null, 2))}</pre></div><div><label>بعد از تغییر</label><pre>${esc(JSON.stringify(d.after, null, 2))}</pre></div></div>`;
   modal(
-    "بررسی نهایی تغییر",
-    `<div class="banner warning">${ico("shield")}<span>${esc(d.warning || "این تغییر فقط پس از تأیید نهایی اعمال می‌شود.")}</span></div><div class="diff"><div><label>قبل از تغییر</label><pre>${esc(JSON.stringify(d.before, null, 2))}</pre></div><div><label>بعد از تغییر</label><pre>${esc(JSON.stringify(d.after, null, 2))}</pre></div></div><label class="confirm-label"><input type="checkbox" id="confirm-change">تغییرات را بررسی کردم و با اعمال آن‌ها موافقم.</label>`,
+    wallet ? "تأیید موجودی کاربر #" + d.target : "بررسی نهایی تغییر",
+    `<div class="banner warning">${ico("shield")}<span>${esc(d.warning || "این تغییر فقط پس از تأیید نهایی اعمال می‌شود.")}</span></div>${preview}<label class="confirm-label"><input type="checkbox" id="confirm-change">تغییرات را بررسی کردم و با اعمال آن‌ها موافقم.</label>`,
     btn("لغو پیش‌نویس", "discard") +
       btn("تأیید و انتشار", "publish", "primary", "disabled"),
   );
@@ -609,7 +616,7 @@ function tableRow(e, r) {
       badge(r.status),
       date(r.time_s),
       "amount" in r ? fa(r.amount) : "محدود",
-      can("users.manage") ? action("مدیریت", "edit-user", r.id) : "—",
+      `<div class="inline-actions">${can("users.manage") ? action("وضعیت", "edit-user", r.id) : ""}${S.meta.actor.owner ? action("تغییر موجودی", "edit-wallet", r.id) : ""}</div>`,
     ];
   if (e === "services")
     return [
@@ -801,6 +808,27 @@ async function editPlan(id = "new", duplicate = false) {
     );
   };
 }
+async function editWallet(id) {
+  if (!S.meta.actor.owner) throw Error("تغییر موجودی فقط برای مالک مجاز است.");
+  const v = await loadDoc("wallet", id);
+  modal(
+    "تغییر موجودی کاربر #" + id,
+    `<p class="note">موجودی فعلی: <strong>${fa(v.amount)} تومان</strong></p><label>موجودی جدید (تومان)</label><input id="wallet-amount" type="text" inputmode="numeric" dir="ltr" value="${esc(v.amount)}" maxlength="19"><label>دلیل تغییر (اجباری)</label><textarea id="wallet-reason" maxlength="200" placeholder="مثلاً اصلاح موجودی با استناد به رسید..."></textarea><p class="note">مبلغ جدید جایگزین موجودی فعلی می‌شود. اگر موجودی هنگام تأیید با پیش‌نمایش متفاوت باشد، عملیات متوقف می‌شود. کاهش موجودی هم به‌صورت تراکنش ثبت خواهد شد.</p>`,
+    btn("انصراف", "close-modal") +
+      btn("پیش‌نمایش تغییر موجودی", "save", "primary"),
+  );
+  S.save = () => {
+    const amount = $("#wallet-amount")
+      .value.trim()
+      .replace(/[۰-۹]/g, (c) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(c)))
+      .replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c)));
+    const reason = $("#wallet-reason").value.trim();
+    if (!/^\d{1,19}$/.test(amount) || BigInt(amount) > 9223372036854775807n)
+      throw Error("مبلغ صحیح و نامنفی به تومان وارد کنید.");
+    if (!reason) throw Error("دلیل تغییر موجودی را بنویسید.");
+    return review({ amount }, reason);
+  };
+}
 async function editUser(id) {
   const v = await loadDoc("users", id);
   modal(
@@ -986,6 +1014,7 @@ document.addEventListener("click", async (e) => {
     if (a === "new-plan") return await editPlan();
     if (a === "edit-plan" || a === "duplicate-plan")
       return await editPlan(b.dataset.id, a === "duplicate-plan");
+    if (a === "edit-wallet") return await editWallet(b.dataset.id);
     if (a === "edit-user") return await editUser(b.dataset.id);
     if (a === "edit-service") return await editService(b.dataset.id);
     if (a === "new-grant") return await editGrant();
@@ -1186,7 +1215,18 @@ window.addEventListener("beforeunload", (e) => {
       tg.ready();
       tg.expand();
       tg.setHeaderColor?.("#102c2e");
-      const login = await api("/auth", { init_data: tg.initData });
+      let login;
+      try {
+        login = await api("/auth", { init_data: tg.initData });
+      } catch (error) {
+        if (error.status === 403) {
+          // Old /admin links remain useful for customers. Keep Telegram's launch
+          // fragment on this same-origin navigation; never put a bearer token in a URL.
+          location.replace("/admin/account" + location.hash);
+          return;
+        }
+        throw error;
+      }
       S.token = login.token;
       S.meta = await api("/me");
     }

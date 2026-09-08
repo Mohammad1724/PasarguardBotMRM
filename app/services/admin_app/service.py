@@ -22,7 +22,7 @@ async def refresh_actor(session, previous):
 def validate_target(entity, target):
     if not isinstance(target, str) or not 1 <= len(target) <= 100:
         fail(422, "شناسه نامعتبر")
-    if entity in ("plans", "users", "services", "tickets", "grants"):
+    if entity in ("plans", "users", "wallet", "services", "tickets", "grants"):
         if entity == "plans" and target == "new":
             return
         if not target.isascii() or not target.isdigit() or not 0 < int(target) < 2**52:
@@ -46,7 +46,7 @@ async def draft(actor, body):
         fail(422, "بخش نامعتبر")
     validate_target(entity, target)
     cfg.permission(actor, entity, target)
-    reason = cfg.label(body.get("reason", "تغییر از مینی‌اپ"), 200)
+    reason = cfg.label(body.get("reason") if entity == "wallet" else body.get("reason", "تغییر از مینی‌اپ"), 200)
     async with Session() as session, session.begin():
         # The seeded singleton serializes web writers including role changes.
         if not await session.get(AdminState, 1, with_for_update=True):
@@ -78,6 +78,9 @@ async def draft(actor, body):
         session.add(row)
         return {
             "token": row.token,
+            "entity": entity,
+            "target": target,
+            "reason": reason,
             "before": before,
             "after": after,
             "expires_in": 900,
@@ -85,6 +88,7 @@ async def draft(actor, body):
                 "plans": "تغییر شرایط پلن، برنامه‌های تمدید آینده را متوقف می‌کند؛ بازگرداندن قیمت، رضایت قبلی را خودکار زنده نمی‌کند. پرداخت ناتمام حفظ می‌شود.",
                 "grants": "با انتشار مجوزها، همه نشست‌های قبلی این ادمین نامعتبر می‌شوند و ورود تازه لازم است.",
                 "services": "فقط برداشت آینده متوقف می‌شود؛ درخواست قبلاً پرداخت‌شده باقی می‌ماند و باید تعیین تکلیف شود.",
+                "wallet": "موجودی کیف پول به تومان تغییر می‌کند و اختلاف در تراکنش‌ها ثبت می‌شود. این کار تأیید پرداخت درگاه یا بازپرداخت خودکار نیست؛ علت و مبلغ را دقیق بررسی کنید.",
                 "users": "فقط دسترسی به ربات تغییر می‌کند؛ سرویس پنل حذف یا مسدود نمی‌شود و موجودی تغییر نمی‌کند.",
                 "tickets": "پاسخ در گفت‌وگوی تیکت ثبت می‌شود. این عملیات تضمین ارسال اعلان تلگرام نیست.",
             }.get(

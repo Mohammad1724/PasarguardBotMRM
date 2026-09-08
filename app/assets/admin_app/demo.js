@@ -173,6 +173,12 @@ window.AdminDemo = {
                     }
                   : { name: r.name, permissions: r.permissions };
       }
+    this.docs.wallet = Object.fromEntries(
+      this.lists.users.map((r) => [
+        r.id,
+        { amount: String(r.amount), currency: "IRT" },
+      ]),
+    );
     this.threads = Object.fromEntries(
       this.lists.tickets.map((r) => [
         r.id,
@@ -321,6 +327,8 @@ window.AdminDemo = {
         return { cancelled: true };
       }
       if (b === "restore") {
+        if (d.entity === "wallet")
+          throw Error("برای اصلاح موجودی، درخواست جدید با دلیل جدید ثبت کنید.");
         return this.dispatch("/changes", {
           entity: d.entity,
           target: d.target,
@@ -338,6 +346,8 @@ window.AdminDemo = {
           target = String(Math.max(...this.lists.plans.map((p) => p.id)) + 1);
           d.after.id = Number(target);
           this.lists.plans.unshift({ ...d.after });
+        } else if (d.entity === "wallet") {
+          this.lists.users.find((r) => r.id == target).amount = d.after.amount;
         } else if (this.lists[d.entity]) {
           const row = this.lists[d.entity].find(
             (r) =>

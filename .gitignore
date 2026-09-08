@@ -18,3 +18,6 @@ business_connections.json
 
 .pytest_cache/
 .ruff_cache/
+
+# Local integration/browser test artifacts
+.cache/
