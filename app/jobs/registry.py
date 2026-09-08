@@ -17,6 +17,7 @@ def register_all_jobs() -> None:
 
     from app.db.crud.cryptopayments import age_online_invoices
     from app.jobs.backup import bootstrap_backup_job, register_backup_job_placeholder
+    from app.jobs.customer_experience import followup_job
     from app.jobs.panels.cleanup import get_cookies
     from app.jobs.payments.stars import reconcile_stars
     from app.jobs.payments.transactions import (
@@ -34,6 +35,7 @@ def register_all_jobs() -> None:
 
     now = datetime.now()
     job_defs = [
+        (followup_job, "interval", {"minutes": 5}, "cx_trial_followups"),
         (prune_webhook_deliveries, "interval", {"hours": 24}, "prune_webhook_deliveries"),
         (reconcile_stars, "interval", {"minutes": 5}, "reconcile_stars"),
         (age_online_invoices, "interval", {"seconds": 60}, "age_online_invoices"),

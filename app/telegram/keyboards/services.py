@@ -81,6 +81,14 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
             is_fair_usage_plan = True
 
     is_test_service = getattr(services, "is_test", False) is True
+    protected_test = False
+    if is_test_service and not admin:
+        from app.db.base import AsyncSessionLocal
+        from app.db.models.customer_experience import TrialJourney
+
+        async with AsyncSessionLocal() as session:
+            protected_test = bool(await session.get(TrialJourney, services.code))
+        protected_test = protected_test or bool(settings and settings.cx_conversion_enabled)
 
     active_buttons = []
     if admin:
@@ -130,7 +138,7 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
                 )
         if settings.qr_mode and panel_button_enabled(get_panel, "btn_qr"):
             active_buttons.append(styled_callback_button(qrcode_text, f"getQrcode:{services.code}", qrcode_style))
-        if settings.transfer_config_mode and panel_button_enabled(get_panel, "btn_transfer"):
+        if not is_test_service and settings.transfer_config_mode and panel_button_enabled(get_panel, "btn_transfer"):
             active_buttons.append(
                 styled_callback_button(transfer_config_text, f"TransferConfig:{services.code}", transfer_config_style)
             )
@@ -148,6 +156,10 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
             )
 
     active_button_rows = [KeyboardButtonRow(active_buttons[i : i + 2]) for i in range(0, len(active_buttons), 2)]
+    if not admin and settings:
+        from app.telegram.user.customer_experience.handlers import service_button_rows
+
+        active_button_rows.extend(await service_button_rows(services, settings))
 
     if admin:
         admin_extra = [
@@ -175,7 +187,8 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
     else:
         back_buttons = []
         if (
-            settings.del_service_mode
+            not protected_test
+            and settings.del_service_mode
             and panel_button_enabled(get_panel, "btn_del_service")
             and status in ["disabled", "expired", "limited"]
         ):
@@ -196,9 +209,11 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
         )
 
     first_row_buttons = []
-    if admin or (settings.change_link_mode and panel_button_enabled(get_panel, "btn_change_link")):
+    if admin or (
+        not protected_test and settings.change_link_mode and panel_button_enabled(get_panel, "btn_change_link")
+    ):
         first_row_buttons.append(change_link)
-    if admin or (settings.sub_mode and panel_button_enabled(get_panel, "btn_change_sub")):
+    if admin or (not protected_test and settings.sub_mode and panel_button_enabled(get_panel, "btn_change_sub")):
         first_row_buttons.append(change_sub)
     if admin or (settings.copy_link_mode and panel_button_enabled(get_panel, "btn_copy_link")):
         first_row_buttons.append(copy_link)

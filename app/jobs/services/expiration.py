@@ -20,64 +20,9 @@ logger = get_logger(__name__)
 
 
 async def cleanup_expired_test_services():
-    """Immediately delete expired test services (no 3-day grace). Runs for all panels."""
-    all_panels = await PanelsManager().get_all_panels()
-    if not all_panels:
-        return 0
-    panel_codes = [p.code for p in all_panels]
-    service_crud = ServiceCRUD()
-    current_time = int(datetime.now().timestamp())
-    batch_size = 500
-    offset = 0
-    total_deleted = 0
-    while True:
-        batch = await service_crud.get_expired_test_services_batch(
-            panel_codes, current_time, limit=batch_size, offset=offset
-        )
-        if not batch:
-            break
-        for service in batch:
-            if service.in_panel and service.panel_userid:
-                try:
-                    panel = await PanelsManager().get_panel_by_code(service.in_panel)
-                    if panel:
-                        api = PasarguardAPI(panel.base_url)
-                        await api.remove_user_by_id(user_id=require_panel_userid(service), token=panel.cookie)
-                except Exception as e:
-                    logger.error(f"Failed to remove test service {service.username} from panel: {e}")
-            ok, _ = await service_crud.delete_service(service.code)
-            if ok:
-                total_deleted += 1
-                try:
-                    await Kenzo.send_message(
-                        service.id,
-                        f"کانفیگ تست شما با نام **{service.username}** به دلیل اتمام زمان پاک شد.",
-                    )
-                except errors.FloodWaitError as e:
-                    await asyncio.sleep(e.seconds)
-                except errors.InputUserDeactivatedError:
-                    await set_user_status(service.id, "DeleteAccount")
-                except errors.UserIsBlockedError:
-                    await set_user_status(service.id, "BlockedBot")
-                except Exception as e:
-                    logger.error(f"test service delete notify failed for {service.id}: {e}")
-                panel_name = "—"
-                if service.in_panel:
-                    p = await PanelsManager().get_panel_by_code(service.in_panel)
-                    if p:
-                        panel_name = p.name
-                log_msg = (
-                    f"🧪 <b>کانفیگ تست پاک شد</b> (به دلیل اتمام زمان)\n\n"
-                    f"◾️ کد سرویس: <code>{service.code}</code>\n"
-                    f"◾️ اسم کانفیگ: <code>{service.username}</code>\n"
-                    f"◾️ شناسه کاربر: <code>{service.id}</code>\n"
-                    f"◾️ پنل: {panel_name}"
-                )
-                await send_log_message(LogType.OTHER, message=log_msg, parse_mode="html")
-        offset += batch_size
-    if total_deleted:
-        logger.info(f"{LogTag.JOB} cleanup_expired_test_services | deleted={total_deleted}")
-    return total_deleted
+    from app.services.customer_experience.lifecycle import cleanup_trials
+
+    return await cleanup_trials()
 
 
 async def cleanup_expired_paid_services(panel_codes: list[int], current_time: int) -> int:

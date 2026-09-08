@@ -9,10 +9,8 @@ from app import Kenzo
 from app.db.crud.panels import PanelsManager
 from app.db.crud.services import ServiceCRUD
 from app.db.crud.user import set_user_status
-from app.logger import LogTag, LogType, get_logger
-from app.services.billing.renewal import require_panel_userid
+from app.logger import LogTag, get_logger
 from app.services.panels.settings import panel_webhook_notifications_enabled
-from app.telegram.shared.utils.logging import send_log_message
 from app.utils.formatting.traffic import format_size
 from app.utils.text.bot_texts import get_bot_text
 
@@ -104,45 +102,17 @@ async def check_low_volume():
                 for service in users[user.username]:
                     is_test = getattr(service, "is_test", False) is True
                     if is_test:
-                        volume_exhausted = remaining <= 0
-                        time_expired = service.expiration_time is not None and service.expiration_time <= current_time
-                        if volume_exhausted or time_expired:
+                        if (user.data_limit and remaining <= 0) or (
+                            service.expiration_time and service.expiration_time <= current_time
+                        ):
+                            from app.services.customer_experience.lifecycle import retire_trial
+
                             try:
-                                if service.panel_userid:
-                                    await api.remove_user_by_id(
-                                        user_id=require_panel_userid(service), token=panel.cookie
-                                    )
-                            except Exception as e:
+                                test_services_deleted += int(await retire_trial(service.code))
+                            except Exception as exc:
                                 logger.warning(
-                                    f"{LogTag.JOB} check_low_volume: remove test user {service.username} from panel: {e}"
+                                    "Trial retirement deferred code=%s error_type=%s", service.code, type(exc).__name__
                                 )
-                            ok, _ = await service_crud.delete_service(service.code)
-                            if ok:
-                                test_services_deleted += 1
-                                logger.info(
-                                    f"{LogTag.JOB} check_low_volume: deleted test service {service.code} "
-                                    f"(volume_exhausted={volume_exhausted}, time_expired={time_expired})"
-                                )
-                                reason = "اتمام حجم" if volume_exhausted else "اتمام زمان"
-                                notify_text = f"کانفیگ تست شما با نام **{service.username}** به دلیل {reason} پاک شد."
-                                try:
-                                    await Kenzo.send_message(service.id, notify_text)
-                                except errors.FloodWaitError as e:
-                                    await asyncio.sleep(e.seconds)
-                                except errors.InputUserDeactivatedError:
-                                    await set_user_status(service.id, "DeleteAccount")
-                                except errors.UserIsBlockedError:
-                                    await set_user_status(service.id, "BlockedBot")
-                                except Exception as e:
-                                    logger.error(f"test service delete notify failed for {service.id}: {e}")
-                                log_msg = (
-                                    f"🧪 <b>کانفیگ تست پاک شد</b> (به دلیل {reason})\n\n"
-                                    f"◾️ کد سرویس: <code>{service.code}</code>\n"
-                                    f"◾️ اسم کانفیگ: <code>{service.username}</code>\n"
-                                    f"◾️ شناسه کاربر: <code>{service.id}</code>\n"
-                                    f"◾️ پنل: {panel.name if panel else '—'}"
-                                )
-                                await send_log_message(LogType.OTHER, message=log_msg, parse_mode="html")
                         continue
 
                     if remaining <= 0:

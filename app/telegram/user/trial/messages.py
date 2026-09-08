@@ -115,6 +115,9 @@ async def free_trial_handler(event: Message):
             data_limit=gigabytes_to_bytes(float(test_volume_gb)),
             expire=day_to_timestamp(int(test_duration_days)),
             note=f"{user_id}\ntest",
+            auto_delete_in_days=7
+            if (paneltest.cx_conversion_enabled or paneltest.cx_followup_enabled or paneltest.cx_onboarding_enabled)
+            else None,
             data_limit_reset_strategy=UserDataLimitResetStrategy.NO_RESET,
         )
         added_user = await PasarguardAPI(panel.base_url).add_user(user=new_user, token=panel.cookie)
@@ -202,6 +205,25 @@ async def free_trial_handler(event: Message):
             f"**🔗 لینک کانفیگ:**\n{subscription_links_text}"
         )
 
+        created, _ = await ServiceCRUD().create_service(
+            code=code_service,
+            username=username,
+            enable=1,
+            in_panel=panel.code,
+            panel_userid=getattr(added_user, "id", None),
+            id=user_id,
+            package_size=gigabytes_to_bytes(float(test_volume_gb)),
+            createtime=Time_Date()["stamp"],
+            expiration_time=day_to_timestamp(int(test_duration_days)),
+            is_test=True,
+        )
+        if not created:
+            raise RuntimeError("Trial created on panel but local persistence failed; reconciliation required")
+        from app.telegram.user.customer_experience.handlers import service_button_rows
+
+        _, stored_trial = await ServiceCRUD().get_service(code_service)
+        cx_rows = await service_button_rows(stored_trial, paneltest)
+
         trial_buttons = ReplyInlineMarkup(
             [
                 KeyboardButtonRow(
@@ -215,6 +237,7 @@ async def free_trial_handler(event: Message):
                 KeyboardButtonRow([KeyboardButtonCopy("برای کپی لینک کلیک کنید", f"{primary_subscription_url}")]),
             ]
         )
+        trial_buttons.rows.extend(cx_rows)
         await respond_with_photo_and_text(
             event,
             file=qr_file,
@@ -225,19 +248,6 @@ async def free_trial_handler(event: Message):
                 f"🔗 `{primary_subscription_url}`"
             ),
             buttons=trial_buttons,
-        )
-
-        await ServiceCRUD().create_service(
-            code=code_service,
-            username=username,
-            enable=1,
-            in_panel=panel.code,
-            panel_userid=getattr(added_user, "id", None),
-            id=user_id,
-            package_size=gigabytes_to_bytes(float(test_volume_gb)),
-            createtime=Time_Date()["stamp"],
-            expiration_time=day_to_timestamp(int(test_duration_days)),
-            is_test=True,
         )
 
         await send_log_message(LogType.OTHER, message=log_text)

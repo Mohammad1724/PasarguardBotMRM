@@ -505,6 +505,7 @@ async def create_vpn_purchase_for_user(
         await DiscountCodeManager().update_discount_usage(code=discount_code)
 
     await ServiceCRUD().create_service(
+        cx_purchase=True,
         code=code_service,
         username=username,
         enable=1,
@@ -536,6 +537,12 @@ async def create_vpn_purchase_for_user(
             KeyboardButtonRow([KeyboardButtonCopy("برای کپی لینک کلیک کنید", f"{primary_subscription_url}")]),
         ]
     )
+    from app.telegram.user.customer_experience.handlers import service_button_rows
+
+    cx_config = await SettingsManager().get_settings()
+    stored_ok, stored_service = await ServiceCRUD().get_service(code_service)
+    if stored_ok and cx_config:
+        purchase_buttons.rows.extend(await service_button_rows(stored_service, cx_config))
     short_caption = (
         f"**🎉 کانفیگ شما ساخته شد** (#{code_service})\n"
         f"**🔷 اسم کانفیگ:** `{username}`\n"

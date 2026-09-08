@@ -259,6 +259,20 @@ async def guard_user_service_callback(event, data: str) -> bool:
         return False
 
     settings = await SettingsManager().get_settings()
+    if serv_msg.is_test is True and data.startswith(
+        ("TransferConfig:", "ChangeLink:", "ChangeSub:", "DeleteService:", "ConfirmDelete:")
+    ):
+        from app.db.base import AsyncSessionLocal
+        from app.db.models.customer_experience import TrialJourney
+
+        async with AsyncSessionLocal() as session:
+            retained = await session.get(TrialJourney, serv_msg.code)
+        if retained or settings.cx_conversion_enabled:
+            await event.answer(
+                "برای حفظ امکان تبدیل، انتقال/حذف/تغییر لینک تست نگه‌داری‌شده غیرفعال است. برای درخواست حذف با پشتیبانی تماس بگیرید.",
+                alert=True,
+            )
+            return False
     panel_status = None
     if data.startswith(("DeleteService:", "ConfirmDelete:")):
         panel_status = await _get_panel_user_status(serv_msg, panel)

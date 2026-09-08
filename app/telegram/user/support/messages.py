@@ -33,6 +33,15 @@ async def support_menu(event: Message):
     if not await ensure_channel_membership(event):
         raise events.StopPropagation
 
+    from app.db.crud.settings import SettingsManager
+
+    config = await SettingsManager().get_settings()
+    if config and config.cx_tickets_enabled:
+        from app.telegram.user.customer_experience.handlers import show_inbox
+
+        await show_inbox(event)
+        raise events.StopPropagation
+
     support_text = await get_bot_text(
         key="support_message",
         default="👈🏻 جهت ارتباط به صورت مستقیم (مشکلات سرویس):\n📍 @AmirKenzoo\n\n🗯 سؤال، پیشنهاد، مشکل و یا انتقاد خودرا در قالب یک پیام متنی واحد به طور کامل ارسال کنید :",

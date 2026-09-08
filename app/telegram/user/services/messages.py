@@ -162,6 +162,13 @@ async def service_message_handler(event: Message):
             if user:
                 ConfigCode = await get_data(event.sender_id, "TransferConfig")
                 config_code_int = int(ConfigCode) if ConfigCode else None
+                source_ok, source_service = await ServiceCRUD().get_service(config_code_int)
+                if not source_ok or (source_service.id != event.sender_id and event.sender_id not in ADMIN_ID):
+                    await event.respond("این سرویس متعلق به شما نیست.")
+                    return
+                if source_service.is_test is True:
+                    await event.respond("برای حفظ هویت تست در مسیر تبدیل، انتقال تست مجاز نیست.")
+                    return
                 await ServiceCRUD().update_service(code=config_code_int, id=user.id)
                 # Update panel user note with new owner Telegram ID
                 ok, service = (False, None)

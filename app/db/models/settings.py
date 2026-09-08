@@ -22,6 +22,11 @@ DEFAULT_CORE_SETTINGS: dict[str, Any] = {
     "single_panel_buy_mode": False,
     "channel_lock": False,
     "backup_interval_hours": 24,
+    "cx_tickets_enabled": False,
+    "cx_onboarding_enabled": False,
+    "cx_conversion_enabled": False,
+    "cx_followup_enabled": False,
+    "cx_support_ids": [],
     **DEFAULT_HOME_MENU_SETTINGS,
 }
 

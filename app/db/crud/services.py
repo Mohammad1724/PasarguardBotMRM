@@ -14,11 +14,19 @@ logger = get_logger(__name__)
 
 
 class ServiceCRUD:
-    async def create_service(self, **kwargs):
+    async def create_service(self, *, cx_purchase=False, **kwargs):
         try:
             async with Session() as session:
                 new_service = Service(**kwargs)
                 session.add(new_service)
+                from app.db.models.settings import Settings
+                from app.services.customer_experience.journeys import enroll_in_session, purchase_in_session
+
+                config = await session.scalar(select(Settings))
+                if new_service.is_test is True and config:
+                    await enroll_in_session(session, new_service, config)
+                elif cx_purchase:
+                    await purchase_in_session(session, new_service.id, new_service.code, int(time.time()))
                 await session.commit()
                 return True, "Service created successfully."
         except SQLAlchemyError as e:

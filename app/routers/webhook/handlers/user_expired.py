@@ -2,19 +2,15 @@
 Handler for user_expired webhook event.
 """
 
-from httpx import HTTPStatusError
 from telethon import errors
 
 from app import Kenzo
 from app.db.crud.services import ServiceCRUD
 from app.db.crud.user import set_user_status
-from app.logger import LogType, get_logger
+from app.logger import get_logger
 from app.models.router_models import WebhookEvent
 from app.routers.webhook.helpers import find_service_by_username
-from app.services.billing.renewal import require_panel_userid
-from app.services.gifts import panel_call
 from app.services.panels.settings import panel_webhook_notifications_enabled
-from app.telegram.shared.utils.logging import send_log_message
 from app.utils.text.bot_texts import get_bot_text
 
 logger = get_logger(__name__)
@@ -37,39 +33,9 @@ async def handle_user_expired(event: WebhookEvent) -> None:
         return
 
     if getattr(service, "is_test", False) is True:
-        if panel:
-            try:
-                await panel_call(panel, "remove_user_by_id", user_id=require_panel_userid(service))
-            except HTTPStatusError as exc:
-                if exc.response.status_code != 404:
-                    raise
-            except Exception as e:
-                logger.error(f"Failed to remove expired test service {service.username} from panel: {e}")
-                raise
-        logger.info(f"Expired test service {service.username} (code {service.code}) removed immediately")
-        try:
-            await Kenzo.send_message(
-                service.id,
-                f"کانفیگ تست شما با نام **{service.username}** به دلیل اتمام زمان پاک شد.",
-            )
-        except errors.FloodWaitError:
-            raise
-        except errors.InputUserDeactivatedError:
-            await set_user_status(service.id, "DeleteAccount")
-        except errors.UserIsBlockedError:
-            await set_user_status(service.id, "BlockedBot")
-        except Exception as e:
-            logger.error(f"Test service delete notify failed for {service.id}: {e}")
-            raise
-        log_msg = (
-            f"🧪 <b>کانفیگ تست پاک شد</b> (وب‌هوک: اتمام زمان)\n\n"
-            f"◾️ کد سرویس: <code>{service.code}</code>\n"
-            f"◾️ اسم کانفیگ: <code>{service.username}</code>\n"
-            f"◾️ شناسه کاربر: <code>{service.id}</code>\n"
-            f"◾️ پنل: {panel.name if panel else '—'}"
-        )
-        await send_log_message(LogType.OTHER, message=log_msg, parse_mode="html")
-        await ServiceCRUD().delete_service(service.code)
+        from app.services.customer_experience.lifecycle import retire_trial
+
+        await retire_trial(service.code)
         return
 
     message_template = await get_bot_text(
