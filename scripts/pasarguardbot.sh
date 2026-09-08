@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── Paths & constants ──────────────────────────────────────────────────────────
-readonly SCRIPT_VERSION="1.2.15"
+readonly SCRIPT_VERSION="1.2.16"
 readonly CONFIG_DIR="/opt/pasarguardbot"
 readonly COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
 readonly ENV_FILE="${CONFIG_DIR}/.env"
@@ -230,6 +230,50 @@ apply_bot_image_tag_for_branch() {
     set_env_var "$ENV_FILE" "PASARGUARDBOT_IMAGE_TAG" "$image_tag"
 }
 
+# True if the given branch exists on the repo (checks the compose raw URL).
+repo_branch_exists() {
+    local branch="$1" status
+    status="$(curl -s -o /dev/null -w '%{http_code}' -I \
+        --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
+        --retry "$CURL_RETRIES" --retry-delay "$CURL_RETRY_DELAY" \
+        "$(compose_raw_url_for_branch "$branch")" 2>/dev/null || echo 000)"
+    [[ "$status" == "200" ]]
+}
+
+# True if the given bot image tag is pullable from GHCR (anonymous).
+# On check failure (network etc.) returns 0 — never block on verifier outages.
+ghcr_tag_exists() {
+    local tag="$1" token status
+    token="$(curl -s --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
+        "https://ghcr.io/token?scope=repository:mohammad1724/pasarguardbotmrm:pull" 2>/dev/null \
+        | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+    [[ -n "$token" ]] || return 0
+    status="$(curl -s -o /dev/null -w '%{http_code}' \
+        --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
+        -H "Authorization: Bearer ${token}" \
+        -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
+        "https://ghcr.io/v2/mohammad1724/pasarguardbotmrm/manifests/${tag}" 2>/dev/null || echo 000)"
+    [[ "$status" == "200" ]]
+}
+
+# Abort early (before .env generation / compose download) when the selected
+# branch or its Docker image tag does not exist — e.g. the dev tag may be
+# unpublished. Prevents half-broken installs.
+verify_branch_and_image_available() {
+    local branch="${1:-$(get_repo_branch)}"
+    local tag
+    tag="$(bot_image_tag_for_branch "$branch")"
+
+    if ! repo_branch_exists "$branch"; then
+        die "Branch '${branch}' was not found on GitHub (no docker-compose.yml at raw URL).\n    Install with branch=main, or push the branch first."
+    fi
+
+    if ! ghcr_tag_exists "$tag"; then
+        die "Bot image '${BOT_IMAGE}:${tag}' does not exist on GHCR (404).\n    This usually means the publish workflow has not run/failed for this branch.\n    Install with branch=main instead, or wait for the image to be published."
+    fi
+    ok "Branch '${branch}' and image tag '${tag}' verified."
+}
+
 # Resolve update/install branch: env > saved file > current git branch > default.
 get_repo_branch() {
     local branch=""
@@ -299,7 +343,19 @@ prompt_repo_branch() {
             SELECTED_REPO_BRANCH="main"
             ;;
         2)
+            if ! repo_branch_exists "dev"; then
+                warn "Branch 'dev' does not exist in this repository."
+                info "Falling back to main."
+                SELECTED_REPO_BRANCH="main"
+                return 0
+            fi
             warn "dev is for testing. Prefer main unless you need unreleased changes."
+            if ! ghcr_tag_exists "$(bot_image_tag_for_branch dev)"; then
+                warn "No published Docker image for the dev branch yet (GHCR tag missing)."
+                info "Falling back to main. (Push to dev and wait for the publish workflow first.)"
+                SELECTED_REPO_BRANCH="main"
+                return 0
+            fi
             SELECTED_REPO_BRANCH="dev"
             ;;
         0)
@@ -612,6 +668,70 @@ verify_docker_stack() {
     fi
     wait_for_docker_daemon
     docker info >/dev/null || die "docker info failed after daemon start."
+}
+
+# Test-create a throwaway bridge network to catch address-pool exhaustion
+# BEFORE the real 'docker compose up' runs. Sets DOCKER_NET_TEST_ERROR.
+DOCKER_NET_TEST_ERROR=""
+docker_network_usable() {
+    local test_net="pasarguardbot-netcheck-$$-$(date +%s)"
+    local create_err=""
+    DOCKER_NET_TEST_ERROR=""
+    if create_err="$(docker network create --driver bridge "$test_net" 2>&1)"; then
+        docker network rm "$test_net" >/dev/null 2>&1 || true
+        return 0
+    fi
+    DOCKER_NET_TEST_ERROR="$create_err"
+    case "$create_err" in
+        *"address pool"*|*"non-overlapping"*|*"all predefined address pools"*) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+# Fail fast (with optional auto-repair on Ubuntu) if Docker cannot create
+# the compose bridge network. Otherwise 'docker compose up' dies mid-install
+# with a confusing error.
+ensure_docker_network_ready() {
+    info "Checking Docker bridge network..."
+    local rc
+    docker_network_usable
+    rc=$?
+    if (( rc == 0 )); then
+        ok "Docker network is ready."
+        return 0
+    fi
+
+    err "Docker network creation failed:"
+    [[ -n "$DOCKER_NET_TEST_ERROR" ]] && echo "    ${DOCKER_NET_TEST_ERROR}" >&2
+
+    if (( rc == 1 )); then
+        warn "This is the classic Docker address-pool exhaustion issue."
+        if is_ubuntu_host; then
+            warn "Ubuntu detected — the built-in netplan repair can fix this."
+            if confirm_yes "Run the Docker Bridge repair now?"; then
+                local fix_status=0
+                set +e
+                run_netplan_fix_command fix
+                fix_status=$?
+                set -e
+                handle_netplan_repair_exit "$fix_status"
+                case "$fix_status" in
+                    0|10)
+                        # Re-test after repair (a reboot may have been offered).
+                        if docker_network_usable; then
+                            ok "Docker network is usable now — continuing."
+                            return 0
+                        fi
+                        warn "Network still not usable (a reboot may be required)."
+                        ;;
+                esac
+            fi
+        else
+            warn "Auto-repair is available on Ubuntu only. See: manager menu → Docker Bridge Network."
+        fi
+    fi
+
+    die "Docker cannot create networks. Fix networking first\n    (manager menu → Docker Bridge Network → Check/Repair), then retry the install."
 }
 
 install_docker_via_get_docker() {
@@ -1263,13 +1383,27 @@ setup_compose() {
 }
 
 pull_images() {
-    info "Pulling Docker images..."
-    if ! docker_compose pull; then
-        err "Failed to pull one or more images."
-        err "If the bot image fails: check GHCR availability and that your CPU architecture is supported (amd64/arm64)."
-        die "docker compose pull failed."
-    fi
-    ok "Images pulled."
+    local attempt
+    local max_attempts=3
+    local -a delays=(5 15 30)
+
+    for attempt in 1 2 3; do
+        info "Pulling Docker images (attempt ${attempt}/${max_attempts})..."
+        if docker_compose pull; then
+            ok "Images pulled."
+            return 0
+        fi
+        if (( attempt < max_attempts )); then
+            warn "Pull failed — retrying in ${delays[$((attempt - 1))]}s"
+            info "(Registry rate limits and flaky connections are common; retries usually help.)"
+            sleep "${delays[$((attempt - 1))]}"
+        fi
+    done
+
+    err "Failed to pull one or more images after ${max_attempts} attempts."
+    err "If the bot image fails: check GHCR availability and that your CPU architecture is supported (amd64/arm64)."
+    err "If the error mentions 'toomanyrequests': Docker Hub rate limit — wait a few minutes and retry."
+    die "docker compose pull failed."
 }
 
 wait_for_containers_healthy() {
@@ -2306,8 +2440,10 @@ action_install_docker() {
     fi
 
     set_install_branch "$branch"
+    verify_branch_and_image_available "$branch"
     check_disk_space
     install_docker
+    ensure_docker_network_ready
     check_required_ports docker
     ensure_config_dirs
     generate_env_file docker "$branch"
@@ -2322,7 +2458,11 @@ action_install_docker() {
         die "docker compose up failed. Check logs with: docker compose -f ${COMPOSE_FILE} logs"
     fi
 
-    wait_for_containers_healthy || true
+    if ! wait_for_containers_healthy; then
+        warn "Bot container did not reach 'running' within the timeout — it may still be starting."
+        info "Check logs:   docker compose -f ${COMPOSE_FILE} logs bot"
+        info "Check status: pasarguardbot → option 7"
+    fi
     set_install_mode docker
     set_install_branch "$branch"
 
@@ -2552,10 +2692,12 @@ action_update_docker() {
 
     old_ver="$(get_installed_bot_version)"
     set_install_branch "$branch"
+    verify_branch_and_image_available "$branch"
 
     info "Updating production Compose from branch '${branch}' (image ${BOT_IMAGE}:$(bot_image_tag_for_branch "$branch"))..."
     setup_compose "$branch"
     pull_images
+    ensure_docker_network_ready
 
     info "Recreating containers..."
     if ! docker_compose up -d --force-recreate --remove-orphans; then
