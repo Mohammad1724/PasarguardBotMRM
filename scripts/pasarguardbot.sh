@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── Paths & constants ──────────────────────────────────────────────────────────
-readonly SCRIPT_VERSION="1.2.17"
+readonly SCRIPT_VERSION="1.2.18"
 readonly CONFIG_DIR="/opt/pasarguardbot"
 readonly COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
 readonly ENV_FILE="${CONFIG_DIR}/.env"
@@ -3032,7 +3032,10 @@ action_restore() {
 # Mini App setup is host-side: no image update or database replacement required.
 action_miniapp() {
     local domain="${1:-}" branch tmp status=0
-    [[ "$(get_install_mode)" == "docker" ]] || die "Mini App automatic setup currently supports Docker installations."
+    case "$(get_install_mode)" in
+        docker|native) ;;
+        *) die "A supported Docker or Native installation is required." ;;
+    esac
     is_installed || die "Install/update the bot to version 3 first."
     [[ "$PKG_MANAGER" == "apt-get" ]] || die "Automatic HTTPS setup currently supports Debian/Ubuntu hosts."
     branch="${PASARGUARDBOT_SETUP_BRANCH:-main}"

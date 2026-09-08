@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Opt-in Docker Mini App setup for Debian/Ubuntu hosts; system Python 3.10+.
+"""Opt-in Docker/Native Mini App setup for Debian/Ubuntu hosts; system Python 3.10+.
 
-Only the bot container, two .env keys and scoped Nginx routes are changed.
+Only the bot runtime, two .env keys and scoped Nginx routes are changed.
 No database restore, image pull, DNS-provider changes or firewall flushing.
 """
 
@@ -283,10 +283,36 @@ class Journal:
         return conflicts
 
 
+def install_mode(root):
+    marker = root / ".install_mode"
+    if marker.exists():
+        mode = marker.read_text().strip()
+    elif (root / "docker-compose.yml").is_file():
+        mode = "docker"
+    elif (root / "app/main.py").is_file():
+        mode = "native"
+    else:
+        mode = ""
+    if mode not in {"docker", "native"}:
+        raise SetupError("نوع نصب مشخص نیست؛ فایل .install_mode را با نصب واقعی تطبیق دهید.")
+    return mode
+
+
+def cgroup_contains(text, group):
+    if not group or group == "/":
+        return False
+    return any(
+        len(parts := line.split(":", 2)) == 3 and (parts[2] == group or parts[2].startswith(group + "/"))
+        for line in text.splitlines()
+    )
+
+
 class Setup:
     def __init__(self, domain, root=ROOT):
         self.domain, self.root = domain, root
         self.env = root / ".env"
+        self.mode = "docker"
+        self.unit = "pasarguardbot.service"
         self.compose = [
             "docker",
             "compose",
@@ -323,9 +349,10 @@ class Setup:
         if os.geteuid() != 0:
             raise SetupError("این ابزار را با sudo اجرا کنید.")
         if not shutil.which("apt-get") or not Path("/run/systemd/system").is_dir():
-            raise SetupError("راه‌اندازی خودکار فعلاً برای Docker روی Debian/Ubuntu دارای systemd است.")
-        if not self.env.is_file() or self.env.is_symlink() or not (self.root / "docker-compose.yml").is_file():
-            raise SetupError("نصب استاندارد Docker در /opt/pasarguardbot پیدا نشد.")
+            raise SetupError("راه‌اندازی خودکار برای Docker یا Native روی Debian/Ubuntu دارای systemd است.")
+        if not self.env.is_file() or self.env.is_symlink():
+            raise SetupError("فایل .env نصب استاندارد در /opt/pasarguardbot پیدا نشد.")
+        self.mode = install_mode(self.root)
         if self.root.is_symlink() or self.root.stat().st_uid != 0 or self.root.stat().st_mode & 0o022:
             raise SetupError("پوشه نصب باید متعلق به root و غیرقابل‌نوشتن برای دیگران باشد.")
         if self.state.is_symlink() or (self.state.exists() and self.state.stat().st_uid != 0):
@@ -335,19 +362,10 @@ class Setup:
         addresses = {row[4][0] for row in socket.getaddrinfo(self.domain, 443, type=socket.SOCK_STREAM)}
         if not addresses or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
             raise SetupError("DNS دامنه باید عمومی و متصل به این سرور باشد؛ IP خصوصی پذیرفته نیست.")
-        if self.run(["docker", "inspect", "pasarguardbot", "--format", "{{.State.Running}}"]).stdout.strip() != "true":
-            raise SetupError("ابتدا ربات نسخه سوم را روشن کنید؛ این ابزار نصب اولیه ربات نیست.")
-        self.run(["docker", "exec", "pasarguardbot", "test", "-f", "/app/app/assets/admin_app/app.js"])
-        self.image = self.run(["docker", "inspect", "pasarguardbot", "--format", "{{.Image}}"]).stdout.strip()
-        self.check_image()
-        ports = json.loads(
-            self.run(["docker", "inspect", "pasarguardbot", "--format", "{{json .NetworkSettings.Ports}}"]).stdout
-        )
-        bindings = ports.get(f"{self.port}/tcp") or []
-        local = [b for b in bindings if b.get("HostIp") in ("127.0.0.1", "0.0.0.0", "")]
-        if len(local) != 1 or not str(local[0]["HostPort"]).isdigit():
-            raise SetupError("پورت API ربات به لوپ‌بک میزبان نگاشت نشده؛ Compose سفارشی را دستی بررسی کنید.")
-        self.host_port = int(local[0]["HostPort"])
+        if self.mode == "native":
+            self.preflight_native()
+        else:
+            self.preflight_docker()
         for port in (80, 443):
             listening = self.run(["ss", "-H", "-ltnp", f"sport = :{port}"]).stdout
             if listening and (
@@ -363,6 +381,64 @@ class Setup:
                 )
             self.run([self.nginx, "-t"])
 
+    def preflight_docker(self):
+        if not (self.root / "docker-compose.yml").is_file():
+            raise SetupError("فایل Compose نصب Docker پیدا نشد.")
+        if self.run(["docker", "inspect", "pasarguardbot", "--format", "{{.State.Running}}"]).stdout.strip() != "true":
+            raise SetupError("ابتدا ربات نسخه سوم را روشن کنید؛ این ابزار نصب اولیه ربات نیست.")
+        self.run(["docker", "exec", "pasarguardbot", "test", "-f", "/app/app/assets/admin_app/app.js"])
+        self.image = self.run(["docker", "inspect", "pasarguardbot", "--format", "{{.Image}}"]).stdout.strip()
+        self.check_image()
+        ports = json.loads(
+            self.run(["docker", "inspect", "pasarguardbot", "--format", "{{json .NetworkSettings.Ports}}"]).stdout
+        )
+        bindings = ports.get(f"{self.port}/tcp") or []
+        local = [b for b in bindings if b.get("HostIp") in ("127.0.0.1", "0.0.0.0", "")]
+        if len(local) != 1 or not str(local[0]["HostPort"]).isdigit():
+            raise SetupError("پورت API ربات به لوپ‌بک میزبان نگاشت نشده؛ Compose سفارشی را دستی بررسی کنید.")
+        self.host_port = int(local[0]["HostPort"])
+
+    def native_unit(self, require_active=False):
+        result = self.run(
+            [
+                "systemctl",
+                "show",
+                self.unit,
+                "--no-pager",
+                "--property=ActiveState,WorkingDirectory,EnvironmentFiles,ControlGroup",
+            ]
+        ).stdout
+        properties = dict(line.split("=", 1) for line in result.splitlines() if "=" in line)
+        workdir = properties.get("WorkingDirectory", "")
+        env_files = properties.get("EnvironmentFiles", "")
+        if not workdir or Path(workdir).resolve() != (self.root / "app").resolve():
+            raise SetupError("WorkingDirectory سرویس Native با مسیر نصب استاندارد یکسان نیست؛ فایل سرویس تغییر نکرد.")
+        if env_files not in {str(self.env) + " (ignore_errors=yes)", str(self.env) + " (ignore_errors=no)"}:
+            raise SetupError(
+                "EnvironmentFile سرویس Native باید همان .env نصب باشد؛ تنظیم سفارشی خودکار بازنویسی نمی‌شود."
+            )
+        if require_active and properties.get("ActiveState") != "active":
+            raise SetupError("ابتدا سرویس pasarguardbot.service را سالم و فعال کنید.")
+        if not (self.root / "app/app/assets/admin_app/app.js").is_file():
+            raise SetupError("سورس Native هنوز مینی‌اپ ندارد؛ ابتدا Update bot از main را انجام دهید، نه نصب مجدد.")
+        return properties
+
+    def preflight_native(self):
+        properties = self.native_unit(require_active=True)
+        self.host_port = self.port
+        listening = self.run(["ss", "-H", "-ltnp", f"sport = :{self.port}"]).stdout
+        for line in listening.splitlines():
+            pids = set(re.findall(r"pid=(\d+)", line))
+            if not pids:
+                raise SetupError("مالک پورت API مشخص نیست؛ هیچ سرویس دیگری متوقف نشد.")
+            for pid in pids:
+                try:
+                    groups = Path(f"/proc/{pid}/cgroup").read_text()
+                except OSError as exc:
+                    raise SetupError("مالک پورت API تغییر کرد؛ دوباره تلاش کنید.") from exc
+                if not cgroup_contains(groups, properties.get("ControlGroup", "")):
+                    raise SetupError("پورت API در اختیار سرویس دیگری است؛ پورت یا آن سرویس خودکار تغییر نکرد.")
+
     def check_image(self):
         # Recreating for env must never silently upgrade to a newly pulled dev image.
         config = json.loads(self.run([*self.compose, "config", "--format", "json"]).stdout)
@@ -374,9 +450,19 @@ class Setup:
             raise SetupError("ایمیج محلی با ربات در حال اجرا یکسان نیست؛ ابتدا ارتقای ربات را کامل کنید.")
 
     def recreate_bot(self):
+        if self.mode == "native":
+            # EnvironmentFile is reread on restart; do not rewrite units or restart stores.
+            self.native_unit()
+            self.bot_touched = True
+            self.run(["systemctl", "restart", self.unit], timeout=180)
+            return
         self.check_image()
         self.bot_touched = True
         self.run([*self.compose, "up", "-d", "--no-deps", "--force-recreate", "--pull", "never", "bot"], timeout=180)
+
+    def stop_bot(self):
+        command = ["systemctl", "stop", self.unit] if self.mode == "native" else ["docker", "stop", "pasarguardbot"]
+        self.run(command, check=False)
 
     def loaded_files(self):
         result = self.run([self.nginx, "-T"])
@@ -484,7 +570,10 @@ class Setup:
             self.journal.write(
                 self.env, update_env(self.content, self.domain, self.port), mode=stat.S_IMODE(self.env.stat().st_mode)
             )
-            print("اعمال تنظیمات؛ فقط کانتینر ربات بازسازی می‌شود، بدون pull یا حذف داده‌ها…", flush=True)
+            print(
+                f"اعمال تنظیمات نصب {self.mode}؛ فقط ربات بازراه‌اندازی می‌شود، بدون pull، تغییر سورس یا حذف داده‌ها…",
+                flush=True,
+            )
             self.recreate_bot()
             self.probe(f"http://127.0.0.1:{self.host_port}/admin/assets/app.js", "Telegram", attempts=30)
             self.probe("https://" + self.domain + "/admin", "/admin/assets/app.js", attempts=3)
@@ -503,7 +592,7 @@ class Setup:
                     self.reload()
                 if self.bot_touched:
                     if conflicts:
-                        self.run(["docker", "stop", "pasarguardbot"], check=False)
+                        self.stop_bot()
                     else:
                         self.recreate_bot()
                 if conflicts:
@@ -522,14 +611,16 @@ class Setup:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="راه‌اندازی خودکار Mini App برای Docker روی Debian/Ubuntu")
+    parser = argparse.ArgumentParser(description="راه‌اندازی خودکار Mini App برای Docker/Native روی Debian/Ubuntu")
     parser.add_argument("domain", nargs="?", help="مثال: admin.example.com")
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("با sudo اجرا کنید.")
     print("DNS باید به این سرور وصل باشد و پورت‌های 80/443 از اینترنت در دسترس باشند.")
     print("HTTPS موجود Nginx حفظ می‌شود؛ در صورت نیاز گواهی Let's Encrypt بدون ایمیل و با پذیرش شرایط آن گرفته می‌شود.")
-    print("ربات کوتاه‌مدت بازسازی می‌شود؛ پیش از راه‌اندازی بکاپ داشته باشید. ابزار DNS یا پنل‌های دیگر را تغییر نمی‌دهد.")
+    print(
+        "ربات کوتاه‌مدت بازراه‌اندازی می‌شود؛ پیش از راه‌اندازی بکاپ داشته باشید. ابزار DNS یا پنل‌های دیگر را تغییر نمی‌دهد."
+    )
     try:
         domain = domain_name(args.domain or input("دامنه مینی‌اپ: "))
         ROOT.mkdir(mode=0o755, parents=True, exist_ok=True)

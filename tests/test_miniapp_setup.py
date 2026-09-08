@@ -371,3 +371,146 @@ def test_shared_https_aliases_are_not_changed(tmp_path):
             "admin.example.com",
             tmp_path / "ours",
         )
+
+
+@pytest.mark.parametrize("mode", ["native", "docker"])
+def test_install_mode_marker_wins_over_old_files(tmp_path, mode):
+    (tmp_path / ".install_mode").write_text(mode + "\n")
+    (tmp_path / "docker-compose.yml").touch()
+    assert m.install_mode(tmp_path) == mode
+
+
+def test_install_mode_native_fallback_and_invalid_marker(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/main.py").touch()
+    assert m.install_mode(tmp_path) == "native"
+    (tmp_path / ".install_mode").write_text("unexpected")
+    with pytest.raises(m.SetupError):
+        m.install_mode(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "text,group,expected",
+    [
+        ("0::/system.slice/pasarguardbot.service", "/system.slice/pasarguardbot.service", True),
+        ("1:name=systemd:/system.slice/pasarguardbot.service/child", "/system.slice/pasarguardbot.service", True),
+        ("0::/system.slice/other.service", "/system.slice/pasarguardbot.service", False),
+        ("0::/system.slice/pasarguardbot.service-other", "/system.slice/pasarguardbot.service", False),
+        ("0::/anything", "/", False),
+        ("garbage", "", False),
+    ],
+)
+def test_native_port_ownership_cgroup_boundaries(text, group, expected):
+    assert m.cgroup_contains(text, group) is expected
+
+
+class FakeNative(FakeSetup):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mode = "native"
+        self.service_state = "active"
+        self.restarts = 0
+        self.unit_overrides = {}
+        self.listener = ""
+        asset = self.root / "app/app/assets/admin_app/app.js"
+        asset.parent.mkdir(parents=True)
+        asset.write_text("synthetic asset")
+
+    def run(self, args, timeout=120, check=True):
+        result = super().run(args, timeout, check)
+        if args[:2] == ["systemctl", "show"]:
+            props = {
+                "ActiveState": self.service_state,
+                "WorkingDirectory": str(self.root / "app"),
+                "EnvironmentFiles": str(self.env) + " (ignore_errors=yes)",
+                "ControlGroup": "/system.slice/pasarguardbot.service",
+                **self.unit_overrides,
+            }
+            result.stdout = "\n".join(f"{key}={value}" for key, value in props.items())
+        if args[:2] == ["systemctl", "restart"]:
+            self.restarts += 1
+            if self.fail == "restart_first" and self.restarts == 1:
+                self.service_state = "failed"
+                raise m.SetupError("synthetic native start failure")
+            self.service_state = "active"
+        if args[0] == "ss":
+            result.stdout = self.listener
+        return result
+
+
+def test_native_setup_uses_only_bot_unit_not_docker_or_stores(host):
+    setup = FakeNative(*host)
+    setup.execute()
+    assert setup.restarts == 1
+    assert "ADMIN_MINI_APP_URL=https://admin.example.com/admin" in setup.env.read_text()
+    assert not any(args[0] in {"docker", "git", "uv"} for args in setup.commands)
+    mutations = [args for args in setup.commands if args[0] == "systemctl" and args[1] in {"restart", "stop"}]
+    assert mutations == [["systemctl", "restart", "pasarguardbot.service"]]
+
+
+@pytest.mark.parametrize("failure", ["backend", "restart_first"])
+def test_native_failed_restart_or_health_restores_env_and_restarts_failed_unit(host, failure):
+    setup = FakeNative(*host, fail=failure)
+    old_env, old_site = setup.env.read_bytes(), setup.original_site.read_bytes()
+    with pytest.raises(m.SetupError):
+        setup.execute()
+    assert setup.env.read_bytes() == old_env and setup.original_site.read_bytes() == old_site
+    assert setup.restarts == 2 and setup.service_state == "active"
+    assert not any(args[0] == "docker" for args in setup.commands)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"WorkingDirectory": "/another/app"},
+        {"EnvironmentFiles": "/another/.env (ignore_errors=yes)"},
+        {"EnvironmentFiles": "/another/.env (ignore_errors=no) /opt/pasarguardbot/.env (ignore_errors=yes)"},
+        {"ActiveState": "failed"},
+    ],
+)
+def test_native_custom_or_inactive_unit_refused_before_changes(host, override):
+    setup = FakeNative(*host)
+    setup.unit_overrides = override
+    with pytest.raises(m.SetupError):
+        setup.native_unit(require_active=True)
+    assert setup.restarts == 0 and not setup.state.exists()
+
+
+def test_native_old_source_refused_before_changes(host):
+    setup = FakeNative(*host)
+    (setup.root / "app/app/assets/admin_app/app.js").unlink()
+    with pytest.raises(m.SetupError):
+        setup.native_unit(require_active=True)
+    assert setup.restarts == 0
+
+
+@pytest.mark.parametrize("owned", [True, False])
+def test_native_existing_listener_must_belong_to_unit(host, monkeypatch, owned):
+    setup = FakeNative(*host)
+    setup.preflight()
+    setup.listener = 'LISTEN 0 128 0.0.0.0:8123 0.0.0.0:* users:(("python",pid=4242,fd=3))'
+    real_path = m.Path
+    monkeypatch.setattr(
+        m,
+        "Path",
+        lambda value: (
+            SimpleNamespace(
+                read_text=lambda: "0::/system.slice/" + ("pasarguardbot.service" if owned else "other.service")
+            )
+            if str(value) == "/proc/4242/cgroup"
+            else real_path(value)
+        ),
+    )
+    if owned:
+        setup.preflight_native()
+        assert setup.host_port == 8123
+    else:
+        with pytest.raises(m.SetupError):
+            setup.preflight_native()
+    assert setup.restarts == 0
+
+
+def test_native_stops_only_bot_on_rollback_conflict(host):
+    setup = FakeNative(*host)
+    setup.stop_bot()
+    assert setup.commands == [["systemctl", "stop", "pasarguardbot.service"]]
