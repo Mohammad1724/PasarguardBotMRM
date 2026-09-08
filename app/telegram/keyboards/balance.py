@@ -45,6 +45,32 @@ async def create_inline_cartbcard(settings, user=None) -> list:
             ]
         )
 
+    if settings and getattr(settings, "zarinpal_mode", False):
+        buttons.append(
+            [
+                await _balance_inline_button(
+                    keyboard_crud,
+                    "in.balance.zarinpal",
+                    KEYBOARD_BUTTON_DEFAULTS["in.balance.zarinpal"],
+                    b"ZarinpalPayment",
+                    bonus_enabled=settings.crypto_bonus_enabled,
+                    bonus_percent=settings.crypto_bonus_percent,
+                )
+            ]
+        )
+
+    if settings and getattr(settings, "stars_mode", False) and int(getattr(settings, "stars_rate", 0) or 0) > 0:
+        buttons.append(
+            [
+                await _balance_inline_button(
+                    keyboard_crud,
+                    "in.balance.stars",
+                    KEYBOARD_BUTTON_DEFAULTS["in.balance.stars"],
+                    b"StarsPayment",
+                )
+            ]
+        )
+
     if settings and is_manual_card_visible(settings, user):
         buttons.append(
             [

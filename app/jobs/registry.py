@@ -22,6 +22,7 @@ def register_all_jobs() -> None:
         ton_checking,
         trx_checking,
         usdt_checking,
+        zarinpal_checking,
     )
     from app.jobs.prices import get_prices_and_update
     from app.jobs.reseller.billing import run_reseller_billing
@@ -38,6 +39,7 @@ def register_all_jobs() -> None:
         (trx_checking, "interval", {"seconds": 60}, "trx_checking"),
         (usdt_checking, "interval", {"seconds": 60}, "usdt_checking"),
         (ton_checking, "interval", {"seconds": 60}, "ton_checking"),
+        (zarinpal_checking, "interval", {"seconds": 60}, "zarinpal_checking"),
         (run_reseller_billing, "interval", {"seconds": 60}, "reseller_billing"),
     ]
 

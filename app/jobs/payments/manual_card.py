@@ -12,6 +12,7 @@ from app.db.crud.settings import SettingsManager
 from app.db.crud.transactions import TransactionCRUD
 from app.db.crud.user import UserCRUD
 from app.services.billing.direct_pay_fulfillment import try_fulfill_after_manual_credit
+from app.services.billing.referral import maybe_pay_referral_reward
 
 from .base import BasePaymentProcessor
 
@@ -33,6 +34,7 @@ class ManualCardProcessor(BasePaymentProcessor):
             result = await crud.approve_manual(tx)
             if not result:
                 continue
+            await maybe_pay_referral_reward(int(tx.user_id), int(tx.amount), source="manual")
             new_amount = result["new_balance"]
             bonus = result["bonus"]
             try:

@@ -43,7 +43,7 @@ from app.services.pricing.crypto_amounts import (
     calculate_trx_amount_with_tax,
     calculate_usdt_amount_with_tax,
 )
-from app.telegram.keyboards.balance import balance_flow_cancel_rows, create_inline_cartbcard
+from app.telegram.keyboards.balance import balance_back_home_button, balance_flow_cancel_rows, create_inline_cartbcard
 from app.telegram.keyboards.common import is_keyboard_config_step
 from app.telegram.keyboards.home import bhome_buttons
 from app.telegram.shared.guards.callback_guards import notify_session_expired
@@ -912,6 +912,132 @@ async def balance_phone_verify_handler(event: Message):
     raise events.StopPropagation
 
 
+async def create_zarinpal_invoice(event, *, amount_irt: int) -> None:
+    """Create a ZarinPal online-gateway invoice and link direct-pay if active."""
+    settings = await SettingsManager().get_settings()
+    if not settings or not getattr(settings, "zarinpal_mode", False) or not settings.zarinpal_merchant:
+        await event.respond(texts.ZARINPAL_GATEWAY_DISABLED_ALERT)
+        await set_step(event.sender_id, states.STEP_HOME)
+        return
+
+    amount = int(amount_irt)
+    if amount < settings.zarinpal_deposit_min or amount > settings.zarinpal_deposit_max:
+        await respond_deposit_amount_range_error(
+            event,
+            text_key="zarinpal_amount_range_error",
+            default=texts.ZARINPAL_AMOUNT_PROMPT_TEMPLATE,
+            min_amount=settings.zarinpal_deposit_min,
+            max_amount=settings.zarinpal_deposit_max,
+        )
+        return
+    if await count_pending_orders(event.sender_id) >= 3:
+        await event.respond(
+            texts.PENDING_ORDERS_LIMIT,
+            buttons=await bhome_buttons(event.sender_id, "fa"),
+        )
+        await set_step(event.sender_id, states.STEP_HOME)
+        return
+
+    from app.services.billing.gateways import zarinpal
+    from app.telegram.shared.url_presets import get_bot_username
+
+    order = random.randint(55555, 999999)
+    bot_username = await get_bot_username(Kenzo)
+    result = await zarinpal.request_payment(
+        settings.zarinpal_merchant,
+        amount,
+        f"https://t.me/{bot_username}",
+        f"شارژ کیف پول | فاکتور {order}",
+        sandbox=settings.zarinpal_sandbox,
+    )
+    if not result.ok:
+        logger.error("ZarinPal request failed for order %s: %s", order, result.message)
+        await event.respond(
+            texts.ZARINPAL_REQUEST_FAILED,
+            buttons=await bhome_buttons(event.sender_id, "fa"),
+        )
+        await set_step(event.sender_id, states.STEP_HOME)
+        return
+
+    respond = getattr(event, "respond", None)
+    if respond is None:
+        return
+    await event.respond("⏳", buttons=await bhome_buttons(event.sender_id, "fa"))
+    invoice = await event.respond(
+        texts.ZARINPAL_INVOICE_TEMPLATE.format(
+            order=order,
+            amount=amount,
+            sandbox=" (آزمایشی)" if settings.zarinpal_sandbox else "",
+        ),
+        parse_mode="html",
+        buttons=[
+            [Button.url("🏦 پرداخت آنلاین", result.url)],
+            [Button.inline("🔄 بررسی پرداخت", f"zarinpal_check:{order}".encode())],
+            [await balance_back_home_button()],
+        ],
+    )
+
+    await add_order_crypto_payment(
+        order_id=order,
+        user_id=event.sender_id,
+        arz="zarinpal",
+        amount=result.authority,
+        amount_irt=amount,
+        createtime=Time_Date()["stamp"],
+        msg_id=invoice.id,
+    )
+    if await is_direct_pay_active(event.sender_id) or await get_pending_for_user(event.sender_id):
+        await link_crypto_order(int(event.sender_id), int(order))
+        await clear_user(event.sender_id)
+
+    log_text = (
+        "#فاکتور_جدید_زرینپال\n"
+        f"👤 شناسه کاربر: <code>{event.sender_id}</code> | "
+        f"<a href='tg://user?id={event.sender_id}'>پروفایل کاربر</a>\n"
+        f"💡 شماره فاکتور: <code>{order}</code>\n"
+        f"💵 مبلغ فاکتور: <code>{amount:,}</code> تومان\n"
+        f"🏦 درگاه: زرین‌پال{' (آزمایشی)' if settings.zarinpal_sandbox else ''}"
+    )
+    await send_log_message(LogType.CRYPTO, message=log_text, parse_mode="html")
+    await set_step(event.sender_id, states.STEP_HOME)
+
+
+async def zarinpal_payment_step_filter(event):
+    if event.is_channel or not event.is_private:
+        return False
+    if (await get_step(event.sender_id)) != states.STEP_ZARINPAL_2:
+        return False
+    msg = event.message.message
+    if not msg:
+        return False
+    return not _is_nav_command(msg)
+
+
+@bot_is_offline
+async def zarinpal_payment_handler(event: Message):
+    msg = event.message.message
+    if msg.isdigit():
+        await create_zarinpal_invoice(event, amount_irt=int(msg))
+        raise events.StopPropagation
+    await respond_deposit_numeric_error(
+        event,
+        text_key="crypto_numeric_error",
+        default=texts.CRYPTO_NUMERIC_ERROR_DEFAULT,
+    )
+    raise events.StopPropagation
+
+
+async def stars_payment_step_filter(event):
+    if event.is_channel or not event.is_private:
+        return False
+    if (await get_step(event.sender_id)) != states.STEP_STARS_2:
+        return False
+    msg = event.message.message
+    if not msg:
+        return False
+    return not _is_nav_command(msg)
+
+
 def register(client):
     client.add_event_handler(
         menu_add_balance_handler,
@@ -940,6 +1066,10 @@ def register(client):
     client.add_event_handler(
         crypto_payments_ton_handler,
         events.NewMessage(incoming=True, func=crypto_payment_ton_step_filter),
+    )
+    client.add_event_handler(
+        zarinpal_payment_handler,
+        events.NewMessage(incoming=True, func=zarinpal_payment_step_filter),
     )
     client.add_event_handler(
         balance_phone_verify_handler,

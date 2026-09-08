@@ -187,6 +187,107 @@ async def message_handler_settings_payment(event: Message):
         await set_step(event.sender_id, "SettingsCardToCard")
         menu_text, buttons = await _maar_menu()
         await event.respond(menu_text, buttons=buttons)
+    elif await get_step(event.sender_id) == "set_zarinpal_merchant" and msg:
+        await SettingsManager().update_setting_by_name("zarinpal_merchant", msg.strip()[:64])
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        settings = await SettingsManager().get_settings()
+        await event.respond(
+            "✅ مرچنت کد ذخیره شد",
+            buttons=keyboards.zarinpal_settings_buttons(settings),
+        )
+
+    elif await get_step(event.sender_id) == "set_zarinpal_min" and msg.isdigit():
+        await set_data(event.sender_id, "zarinpal_deposit_min", int(msg))
+        await set_step(event.sender_id, "set_zarinpal_max")
+        await event.respond(texts.ZARINPAL_MAX_PROMPT)
+    elif await get_step(event.sender_id) == "set_zarinpal_min":
+        await event.respond(texts.NUMERIC_ONLY)
+
+    elif await get_step(event.sender_id) == "set_zarinpal_max" and msg.isdigit():
+        min_val = await get_data(event.sender_id, "zarinpal_deposit_min")
+        settings = await SettingsManager().get_settings()
+        await SettingsManager().update_setting(
+            settings.id,
+            zarinpal_deposit_min=int(min_val),
+            zarinpal_deposit_max=int(msg),
+        )
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        settings = await SettingsManager().get_settings()
+        await event.respond(
+            "✅ محدودیت واریز زرین‌پال ذخیره شد",
+            buttons=keyboards.zarinpal_settings_buttons(settings),
+        )
+    elif await get_step(event.sender_id) == "set_zarinpal_max":
+        await event.respond(texts.NUMERIC_ONLY)
+
+    elif await get_step(event.sender_id) == "set_stars_rate" and msg.isdigit():
+        await SettingsManager().update_setting_by_name("stars_rate", int(msg))
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        settings = await SettingsManager().get_settings()
+        await event.respond(
+            "✅ نرخ ستاره ذخیره شد",
+            buttons=keyboards.stars_settings_buttons(settings),
+        )
+    elif await get_step(event.sender_id) == "set_stars_rate":
+        await event.respond(texts.NUMERIC_ONLY)
+
+    elif await get_step(event.sender_id) == "set_stars_min" and msg.isdigit():
+        await set_data(event.sender_id, "stars_deposit_min", int(msg))
+        await set_step(event.sender_id, "set_stars_max")
+        await event.respond(texts.STARS_MAX_PROMPT)
+    elif await get_step(event.sender_id) == "set_stars_min":
+        await event.respond(texts.NUMERIC_ONLY)
+
+    elif await get_step(event.sender_id) == "set_stars_max" and msg.isdigit():
+        min_val = await get_data(event.sender_id, "stars_deposit_min")
+        settings = await SettingsManager().get_settings()
+        await SettingsManager().update_setting(
+            settings.id,
+            stars_deposit_min=int(min_val),
+            stars_deposit_max=int(msg),
+        )
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        settings = await SettingsManager().get_settings()
+        await event.respond(
+            "✅ محدودیت واریز ستاره‌ای ذخیره شد",
+            buttons=keyboards.stars_settings_buttons(settings),
+        )
+    elif await get_step(event.sender_id) == "set_stars_max":
+        await event.respond(texts.NUMERIC_ONLY)
+
+    elif await get_step(event.sender_id) == "set_referral_percent" and msg.isdigit():
+        percent = int(msg)
+        if percent > 100:
+            await event.respond(texts.PERCENT_RANGE_ERROR, buttons=keyboards.back_to_settings_card_row())
+            raise events.StopPropagation
+        await SettingsManager().update_setting_by_name("referral_percent", percent)
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        settings = await SettingsManager().get_settings()
+        await event.respond(
+            "✅ درصد پاداش زیرمجموعه ذخیره شد",
+            buttons=keyboards.referral_settings_buttons(settings),
+        )
+    elif await get_step(event.sender_id) == "set_referral_percent":
+        await event.respond(texts.NUMERIC_ONLY)
+
+    elif await get_step(event.sender_id) in ("set_referral_first_bonus", "set_referral_min_deposit") and msg.isdigit():
+        key = "referral_first_bonus" if await get_step(event.sender_id) == "set_referral_first_bonus" else "referral_min_deposit"
+        await SettingsManager().update_setting_by_name(key, int(msg))
+        await clear_user(event.sender_id)
+        await set_step(event.sender_id, "SettingsCardToCard")
+        settings = await SettingsManager().get_settings()
+        await event.respond(
+            "✅ ذخیره شد",
+            buttons=keyboards.referral_settings_buttons(settings),
+        )
+    elif await get_step(event.sender_id) in ("set_referral_first_bonus", "set_referral_min_deposit"):
+        await event.respond(texts.NUMERIC_ONLY)
+
     elif await get_step(event.sender_id) in ("maar_edit_min", "maar_edit_max", "maar_edit_delay"):
         rule_id = int(await get_data(event.sender_id, "maar_rule_id"))
         field = {

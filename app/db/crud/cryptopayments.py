@@ -20,6 +20,14 @@ class CryptoPaymentsCRUD:
         except SQLAlchemyError:
             return []
 
+    async def get_by_order_id(self, order_id: int):
+        try:
+            async with Session() as session:
+                result = await session.execute(select(CryptoPayments).filter(CryptoPayments.order_id == order_id))
+                return result.scalar_one_or_none()
+        except SQLAlchemyError:
+            return None
+
     async def update_payment_status(self, order_id: int, status: str, paytime: int | None = None):
         try:
             async with Session() as session:

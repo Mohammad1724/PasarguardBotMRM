@@ -5,7 +5,10 @@ from telethon.tl.custom import Message
 
 from app import Kenzo
 from app.db.crud.keyboards import get_button_text
+from app.db.crud.settings import SettingsManager
+from app.db.crud.transactions import TransactionCRUD
 from app.db.crud.user import UserCRUD
+from app.services.billing.referral import build_referral_link
 from app.services.billing.sticky_discount import format_profile_sticky_discount, get_sticky_discount
 from app.telegram.keyboards.common import is_keyboard_config_step
 from app.telegram.shared.guards.channel_gate import ensure_channel_membership
@@ -30,9 +33,26 @@ async def _build_discount_status(user_id: int) -> str:
     return texts.discount_code_text(discount_code_status)
 
 
+async def _build_referral_section(user_id: int, info) -> str:
+    settings = await SettingsManager().get_settings()
+    if not settings or not getattr(settings, "referral_enabled", False):
+        return ""
+    bot_username = await get_bot_username(Kenzo)
+    link = build_referral_link(bot_username, user_id)
+    earned = await TransactionCRUD().sum_user_transactions(user_id, method="referral")
+    return texts.referral_section_text(
+        link=link,
+        invite_count=int(info.invite or 0),
+        earned=earned,
+        percent=int(getattr(settings, "referral_percent", 0) or 0),
+        first_bonus=int(getattr(settings, "referral_first_bonus", 0) or 0),
+    )
+
+
 async def _build_profile_message(user_id: int, info) -> str:
     date_message = Time_Date(info.time_s) if info.time_s else {"jf": states.DATE_NOT_REGISTERED}
     discount_status = await _build_discount_status(user_id)
+    referral_section = await _build_referral_section(user_id, info)
     if info.number is None:
         info.number = states.PHONE_NOT_REGISTERED
     return texts.profile_message(
@@ -40,7 +60,7 @@ async def _build_profile_message(user_id: int, info) -> str:
         info,
         date_message["jf"],
         discount_status,
-    )
+    ) + referral_section
 
 
 async def menu_profile_filter(event):

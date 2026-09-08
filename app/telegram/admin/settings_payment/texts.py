@@ -197,3 +197,55 @@ def tx_approved_user_message(user_id, amount: int, bonus: int, bonus_percent: in
         message += f"💰 مجموع: {total:,} تومان\n"
     message += "👜 موجودی شما به کیف پولتون در بات اضافه شده\n💡 اکنون می‌توانید از ربات خرید کنید."
     return message
+
+
+def zarinpal_settings_header(settings) -> str:
+    status = "✅ فعال" if settings and settings.zarinpal_mode else "❌ غیرفعال"
+    sandbox = "🧪 آزمایشی" if settings and settings.zarinpal_sandbox else "🌐 اصلی"
+    merchant = str(getattr(settings, "zarinpal_merchant", "") or "") or "تنظیم نشده"
+    return (
+        "🏦 **تنظیمات درگاه زرین‌پال**\n\n"
+        f"🔘 وضعیت: {status}\n"
+        f"🔐 مرچنت کد: `{merchant}`\n"
+        f"🌍 محیط: {sandbox}\n"
+        f"📉 حداقل: `{settings.zarinpal_deposit_min:,}` | 📈 حداکثر: `{settings.zarinpal_deposit_max:,}` تومان\n\n"
+        "مرچنت کد را از پنل zarinpal.com دریافت کنید. برای تست، حالت آزمایشی را روشن کنید."
+    )
+
+
+def stars_settings_header(settings) -> str:
+    status = "✅ فعال" if settings and settings.stars_mode else "❌ غیرفعال"
+    rate = int(getattr(settings, "stars_rate", 0) or 0)
+    return (
+        "⭐ **پرداخت با ستاره تلگرام**\n\n"
+        f"🔘 وضعیت: {status}\n"
+        f"📝 نرخ هر ستاره: `{rate:,}` تومان\n"
+        f"📉 حداقل: `{settings.stars_deposit_min:,}` | 📈 حداکثر: `{settings.stars_deposit_max:,}` تومان\n\n"
+        "نرخ ستاره را متناسب با قیمت روز تنظیم کنید؛ مبلغ تومانی کاربر بر این نرخ به ستاره تبدیل می‌شود."
+    )
+
+
+def referral_settings_header(settings) -> str:
+    status = "✅ فعال" if settings and settings.referral_enabled else "❌ غیرفعال"
+    percent = int(getattr(settings, "referral_percent", 0) or 0)
+    first_bonus = int(getattr(settings, "referral_first_bonus", 0) or 0)
+    min_deposit = int(getattr(settings, "referral_min_deposit", 0) or 0)
+    return (
+        "👥 **سیستم زیرمجموعه‌گیری**\n\n"
+        f"🔘 وضعیت: {status}\n"
+        f"📈 درصد پاداش از شارژ: `{percent}%`\n"
+        f"🎉 پاداش اولین شارژ: `{first_bonus:,}` تومان\n"
+        f"📉 حداقل مبلغ شارژ برای پاداش: `{min_deposit:,}` تومان\n\n"
+        "لینک هر کاربر به‌صورت خودکار در پروفایلش نمایش داده می‌شود."
+    )
+
+
+ZARINPAL_MERCHANT_PROMPT = "مرچنت کد زرین‌پال را ارسال کنید (UUID):"
+ZARINPAL_MIN_PROMPT = "حداقل مبلغ واریز زرین‌پال را وارد کنید (تومان):"
+ZARINPAL_MAX_PROMPT = "حداکثر مبلغ واریز زرین‌پال را وارد کنید (تومان):"
+STARS_RATE_PROMPT = "قیمت هر ستاره تلگرام را به تومان وارد کنید (مثال: 1500):"
+STARS_MIN_PROMPT = "حداقل مبلغ واریز ستاره‌ای را وارد کنید (تومان):"
+STARS_MAX_PROMPT = "حداکثر مبلغ واریز ستاره‌ای را وارد کنید (تومان):"
+REFERRAL_PERCENT_PROMPT = "درصد پاداش زیرمجموعه از هر شارژ را وارد کنید (0-100):"
+REFERRAL_FIRST_BONUS_PROMPT = "پاداش ثابت اولین شارژ هر کاربر را به تومان وارد کنید (0 برای خاموش):"
+REFERRAL_MIN_DEPOSIT_PROMPT = "حداقل مبلغ شارژ برای محاسبه پاداش را وارد کنید (تومان، 0 = بدون محدودیت):"

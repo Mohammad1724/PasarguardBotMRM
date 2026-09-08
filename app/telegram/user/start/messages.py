@@ -8,6 +8,7 @@ from telethon.tl.custom import Message
 from app import Kenzo
 from app.db.crud.user import UserCRUD, add_user, clear_reactivatable_status
 from app.logger import get_logger
+from app.services.billing.referral import bind_referrer_from_start, parse_referral_start_param
 from app.telegram.keyboards.home import bhome_buttons
 from app.telegram.shared.guards.channel_gate import (
     extract_start_param,
@@ -58,6 +59,8 @@ async def start_command_handler(event: Message):
     else:
         if helpers.parse_discount_start_param(param):
             await helpers.handle_discount_start_param(event.sender_id, param)
+        elif parse_referral_start_param(param):
+            await bind_referrer_from_start(event.sender_id, param)
         elif param and not is_documented_start_param(param):
             logger.info("Unknown start param %r — showing welcome menu", param)
         await helpers.send_welcome_menu(event, welcome_text, lang)

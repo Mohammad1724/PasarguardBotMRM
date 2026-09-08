@@ -14,6 +14,7 @@ from app.services.billing.direct_pay_fulfillment import (
     cancel_after_manual_reject,
     try_fulfill_after_manual_credit,
 )
+from app.services.billing.referral import maybe_pay_referral_reward
 from app.telegram.admin.settings_payment import keyboards, texts
 from app.telegram.state import set_data, set_step
 from config import ADMIN_ID
@@ -38,6 +39,20 @@ _SETTINGS_PAYMENT_EXACT_CALLBACKS = frozenset(
         "toggle_crypto_bonus",
         "set_manual_bonus_percent",
         "set_crypto_bonus_percent",
+        "zarinpal_settings_menu",
+        "toggle_zarinpal_mode",
+        "toggle_zarinpal_sandbox",
+        "set_zarinpal_merchant",
+        "set_zarinpal_limits",
+        "stars_settings_menu",
+        "toggle_stars_mode",
+        "set_stars_rate",
+        "set_stars_limits",
+        "referral_settings_menu",
+        "toggle_referral_enabled",
+        "set_referral_percent",
+        "set_referral_first_bonus",
+        "set_referral_min_deposit",
     }
 )
 
@@ -254,6 +269,91 @@ async def callback_settings_payment(event: events.CallbackQuery.Event):
         await set_step(event.sender_id, "set_crypto_bonus_percent")
         await event.edit(texts.CRYPTO_BONUS_PERCENT_PROMPT, buttons=keyboards.back_to_bonus_menu_button())
 
+    elif data == "zarinpal_settings_menu":
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.zarinpal_settings_header(settings),
+            buttons=keyboards.zarinpal_settings_buttons(settings),
+        )
+
+    elif data == "toggle_zarinpal_mode":
+        settings = await SettingsManager().get_settings()
+        await SettingsManager().update_setting(settings.id, zarinpal_mode=not settings.zarinpal_mode)
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.zarinpal_settings_header(settings),
+            buttons=keyboards.zarinpal_settings_buttons(settings),
+        )
+
+    elif data == "toggle_zarinpal_sandbox":
+        settings = await SettingsManager().get_settings()
+        await SettingsManager().update_setting(settings.id, zarinpal_sandbox=not settings.zarinpal_sandbox)
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.zarinpal_settings_header(settings),
+            buttons=keyboards.zarinpal_settings_buttons(settings),
+        )
+
+    elif data == "set_zarinpal_merchant":
+        await set_step(event.sender_id, "set_zarinpal_merchant")
+        await event.edit(texts.ZARINPAL_MERCHANT_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
+    elif data == "set_zarinpal_limits":
+        await set_step(event.sender_id, "set_zarinpal_min")
+        await event.edit(texts.ZARINPAL_MIN_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
+    elif data == "stars_settings_menu":
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.stars_settings_header(settings),
+            buttons=keyboards.stars_settings_buttons(settings),
+        )
+
+    elif data == "toggle_stars_mode":
+        settings = await SettingsManager().get_settings()
+        await SettingsManager().update_setting(settings.id, stars_mode=not settings.stars_mode)
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.stars_settings_header(settings),
+            buttons=keyboards.stars_settings_buttons(settings),
+        )
+
+    elif data == "set_stars_rate":
+        await set_step(event.sender_id, "set_stars_rate")
+        await event.edit(texts.STARS_RATE_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
+    elif data == "set_stars_limits":
+        await set_step(event.sender_id, "set_stars_min")
+        await event.edit(texts.STARS_MIN_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
+    elif data == "referral_settings_menu":
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.referral_settings_header(settings),
+            buttons=keyboards.referral_settings_buttons(settings),
+        )
+
+    elif data == "toggle_referral_enabled":
+        settings = await SettingsManager().get_settings()
+        await SettingsManager().update_setting(settings.id, referral_enabled=not settings.referral_enabled)
+        settings = await SettingsManager().get_settings()
+        await event.edit(
+            texts.referral_settings_header(settings),
+            buttons=keyboards.referral_settings_buttons(settings),
+        )
+
+    elif data == "set_referral_percent":
+        await set_step(event.sender_id, "set_referral_percent")
+        await event.edit(texts.REFERRAL_PERCENT_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
+    elif data == "set_referral_first_bonus":
+        await set_step(event.sender_id, "set_referral_first_bonus")
+        await event.edit(texts.REFERRAL_FIRST_BONUS_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
+    elif data == "set_referral_min_deposit":
+        await set_step(event.sender_id, "set_referral_min_deposit")
+        await event.edit(texts.REFERRAL_MIN_DEPOSIT_PROMPT, buttons=keyboards.back_to_settings_card_row())
+
     elif data.startswith("BackTOSettingsCardToCard"):
         await set_step(user_id=event.sender_id, step="SettingsCardToCard")
         settings = await SettingsManager().get_settings()
@@ -288,6 +388,7 @@ async def callback_transaction_review(event: events.CallbackQuery.Event):
             completed_at=result["completed_at"],
         )
         await event.edit(admin_message, buttons=keyboards.tx_review_result_button(approved=True))
+        await maybe_pay_referral_reward(int(tx.user_id), int(tx.amount), source="manual")
         fulfilled = await try_fulfill_after_manual_credit(tx_id)
         if not fulfilled:
             await Kenzo.send_message(

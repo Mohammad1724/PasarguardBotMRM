@@ -9,6 +9,7 @@ from app.jobs.payments import (
     TONProcessor,
     TRXProcessor,
     USDTProcessor,
+    ZarinpalProcessor,
 )
 from app.logger import LogTag, get_logger
 
@@ -18,6 +19,7 @@ manual_card_processor = ManualCardProcessor()
 trx_processor = TRXProcessor()
 usdt_processor = USDTProcessor()
 ton_processor = TONProcessor()
+zarinpal_processor = ZarinpalProcessor()
 
 
 async def auto_confirm_job():
@@ -50,3 +52,11 @@ async def ton_checking():
     await ton_processor.check_payments()
     elapsed = time.time() - start_time
     logger.debug(f"{LogTag.JOB} ton_checking completed: {elapsed:.2f}s")
+
+
+async def zarinpal_checking():
+    start_time = time.time()
+    logger.debug("%s zarinpal_checking started", LogTag.JOB)
+    await zarinpal_processor.check_payments()
+    elapsed = time.time() - start_time
+    logger.debug(f"{LogTag.JOB} zarinpal_checking completed: {elapsed:.2f}s")

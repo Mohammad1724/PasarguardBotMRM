@@ -2,6 +2,7 @@
 
 from telethon import events
 
+from app.db.crud.cryptopayments import CryptoPaymentsCRUD
 from app.db.crud.settings import SettingsManager
 from app.db.crud.user import UserManager
 from app.db.crud.wallets import WalletCRUD
@@ -27,6 +28,7 @@ from app.telegram.user.balance.messages import (
     _request_phone_for_balance_payment,
     _require_balance_payment_step,
     create_crypto_invoice,
+    create_zarinpal_invoice,
     manual_card_amount_placeholders,
     manual_card_prompt_amount,
     manual_card_send_channel_info,
@@ -178,6 +180,104 @@ async def manual_card_send_photo_callback(event: events.CallbackQuery.Event):
 
 @bot_is_offline
 @debounce_callback()
+async def zarinpal_payment_callback(event: events.CallbackQuery.Event):
+    if not await _require_balance_payment_step(event):
+        return
+    settings = await SettingsManager().get_settings()
+    if not settings or not getattr(settings, "zarinpal_mode", False) or not settings.zarinpal_merchant:
+        await event.answer(texts.ZARINPAL_GATEWAY_DISABLED_ALERT, alert=True)
+        raise events.StopPropagation
+    if await is_direct_pay_active(event.sender_id):
+        amount = await get_direct_pay_prefilled_amount(event.sender_id)
+        if amount is None:
+            await event.answer(texts.ENTER_AMOUNT_FIRST_ALERT, alert=True)
+            raise events.StopPropagation
+        amount = clamp_deposit_amount(amount, settings.zarinpal_deposit_min, settings.zarinpal_deposit_max)
+        await set_data(event.sender_id, "mablagh", amount)
+        await create_zarinpal_invoice(event, amount_irt=amount)
+        raise events.StopPropagation
+    await event.edit(
+        texts.ZARINPAL_AMOUNT_PROMPT_TEMPLATE.format(
+            min=f"{settings.zarinpal_deposit_min:,}",
+            max=f"{settings.zarinpal_deposit_max:,}",
+        ),
+        buttons=await balance_flow_cancel_rows(),
+    )
+    await remember_balance_flow_message(event.sender_id, event.message_id)
+    await set_step(user_id=event.sender_id, step=states.STEP_ZARINPAL_2)
+    raise events.StopPropagation
+
+
+@bot_is_offline
+@debounce_callback()
+async def zarinpal_check_callback(event: events.CallbackQuery.Event):
+    """Manual on-demand verification for a pending ZarinPal invoice."""
+    data = event.data.decode("utf-8")
+    try:
+        order_id = int(data.split(":")[1])
+    except (IndexError, ValueError):
+        raise events.StopPropagation from None
+
+    settings = await SettingsManager().get_settings()
+    payment = await CryptoPaymentsCRUD().get_by_order_id(order_id)
+    if not payment or (payment.arz or "").upper() != "ZARINPAL":
+        await event.answer(texts.ZARINPAL_NOT_FOUND, alert=True)
+        raise events.StopPropagation
+    if payment.status != "Pending":
+        await event.answer(texts.ZARINPAL_CHECK_PENDING, alert=True)
+        raise events.StopPropagation
+
+    from app.jobs.payments.zarinpal import confirm_zarinpal_payment
+    from app.services.billing.gateways import zarinpal
+
+    result = await zarinpal.verify_payment(
+        settings.zarinpal_merchant,
+        int(payment.amount_irt),
+        str(payment.amount),
+        sandbox=settings.zarinpal_sandbox,
+    )
+    if not result.ok:
+        await event.answer(texts.ZARINPAL_CHECK_PENDING, alert=True)
+        raise events.StopPropagation
+    await confirm_zarinpal_payment(payment, settings, result.ref_id)
+    await event.answer("✅ پرداخت با موفقیت تایید شد", alert=True)
+    raise events.StopPropagation
+
+
+@bot_is_offline
+@debounce_callback()
+async def stars_payment_callback(event: events.CallbackQuery.Event):
+    if not await _require_balance_payment_step(event):
+        return
+    settings = await SettingsManager().get_settings()
+    if not settings or not getattr(settings, "stars_mode", False) or int(getattr(settings, "stars_rate", 0) or 0) <= 0:
+        await event.answer(texts.STARS_RATE_UNSET, alert=True)
+        raise events.StopPropagation
+    if await is_direct_pay_active(event.sender_id):
+        amount = await get_direct_pay_prefilled_amount(event.sender_id)
+        if amount is None:
+            await event.answer(texts.ENTER_AMOUNT_FIRST_ALERT, alert=True)
+            raise events.StopPropagation
+        amount = clamp_deposit_amount(amount, settings.stars_deposit_min, settings.stars_deposit_max)
+        await set_data(event.sender_id, "mablagh", amount)
+        from app.telegram.user.balance.stars import create_stars_invoice
+
+        await create_stars_invoice(event, amount_irt=amount)
+        raise events.StopPropagation
+    await event.edit(
+        texts.STARS_AMOUNT_PROMPT_TEMPLATE.format(
+            min=f"{settings.stars_deposit_min:,}",
+            max=f"{settings.stars_deposit_max:,}",
+        ),
+        buttons=await balance_flow_cancel_rows(),
+    )
+    await remember_balance_flow_message(event.sender_id, event.message_id)
+    await set_step(user_id=event.sender_id, step=states.STEP_STARS_2)
+    raise events.StopPropagation
+
+
+@bot_is_offline
+@debounce_callback()
 async def balance_flow_cancel_callback(event: events.CallbackQuery.Event):
     if await get_step(event.sender_id) not in states.BALANCE_FLOW_CANCEL_STEPS:
         await event.answer(texts.FLOW_NOT_CANCELLABLE_ALERT, alert=True)
@@ -235,6 +335,18 @@ def register(client):
     client.add_event_handler(
         crypto_payments_ton_callback,
         events.CallbackQuery(data=states.CALLBACK_CRYPTO_TON),
+    )
+    client.add_event_handler(
+        zarinpal_payment_callback,
+        events.CallbackQuery(data=states.CALLBACK_ZARINPAL),
+    )
+    client.add_event_handler(
+        zarinpal_check_callback,
+        events.CallbackQuery(pattern=rb"^zarinpal_check:\d+$"),
+    )
+    client.add_event_handler(
+        stars_payment_callback,
+        events.CallbackQuery(data=states.CALLBACK_STARS),
     )
     client.add_event_handler(
         manual_card_payment_callback,

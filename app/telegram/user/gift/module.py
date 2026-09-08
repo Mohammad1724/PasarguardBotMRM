@@ -1,11 +1,11 @@
-"""Package entry point for the user balance module."""
+"""Package entry point for the user gift code module."""
 
-from app.telegram.user.balance import callbacks, messages, stars
+from app.telegram.user.gift import callbacks, messages
 
-MODULE_NAME = "user.balance"
+MODULE_NAME = "user.gift"
 MODULE_ENABLED = True
 MODULE_ORDER = 1000
-MODULE_DESCRIPTION = "User balance and payment flow"
+MODULE_DESCRIPTION = "User gift code redemption (balance/days/volume)"
 
 _registered_clients: set[int] = set()
 
@@ -16,5 +16,4 @@ def setup(client):
         return
     messages.register(client)
     callbacks.register(client)
-    stars.register(client)
     _registered_clients.add(client_id)

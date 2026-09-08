@@ -10,6 +10,7 @@ from app.jobs.payments.manual_card import ManualCardProcessor
 from app.jobs.payments.ton import TONProcessor
 from app.jobs.payments.trx import TRXProcessor
 from app.jobs.payments.usdt import USDTProcessor
+from app.jobs.payments.zarinpal import ZarinpalProcessor
 
 __all__ = [
     "BasePaymentProcessor",
@@ -17,4 +18,5 @@ __all__ = [
     "TONProcessor",
     "TRXProcessor",
     "USDTProcessor",
+    "ZarinpalProcessor",
 ]

@@ -99,6 +99,7 @@ Panel_Admin_Buttons = [
     [create_button("💳 تنظیمات درگاه"), create_button("👥 آمار گیری")],
     [create_button("📚 منوی پنل ها"), create_button("⚙️ تنظیمات ربات")],
     [create_button("🎟 کدتخفیف"), create_button("🗞 ساخت پلن")],
+    [create_button("🎁 کد هدیه")],
     [create_button("🏢 پلن نمایندگی")],
     [create_button("👤 مدیریت کاربر"), create_button("📮 ارسال همگانی")],
     [create_button("📥 فوروارد همگانی")],

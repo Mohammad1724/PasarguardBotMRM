@@ -21,6 +21,7 @@ from app.services.billing.direct_pay_fulfillment import (
     try_fulfill_after_crypto_credit,
 )
 from app.services.billing.payment_bonus import calculate_payment_bonus
+from app.services.billing.referral import maybe_pay_referral_reward
 from app.telegram.shared.utils.logging import send_log_message
 from config import TRX_TESTNET_MODE
 
@@ -262,6 +263,7 @@ async def _process_payment_confirmation(payment, settings, transaction, address_
         return
     payment, new_amount = approved
 
+    await maybe_pay_referral_reward(int(payment.user_id), int(payment.amount_irt), source="usdt")
     fulfilled = await try_fulfill_after_crypto_credit(int(payment.order_id))
     if not fulfilled:
         user_msg = _format_user_payment_message(payment, settings, bonus, total_amount, new_amount)

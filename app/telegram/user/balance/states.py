@@ -11,6 +11,7 @@ STEP_CRYPTO_TRX_2 = "CryptoPayments_TRX_2"
 STEP_CRYPTO_USDT_2 = "CryptoPayments_USDT_2"
 STEP_CRYPTO_TON_2 = "CryptoPayments_TON_2"
 STEP_STARS_2 = "StarsPayment_2"
+STEP_ZARINPAL_2 = "ZarinpalPayment_2"
 STEP_CONF_NUMBER = "conf_number"
 STEP_HOME = "home"
 STEP_START = "start"
@@ -25,6 +26,7 @@ BALANCE_FLOW_CANCEL_STEPS = frozenset(
         STEP_CRYPTO_USDT_2,
         STEP_CRYPTO_TON_2,
         STEP_STARS_2,
+        STEP_ZARINPAL_2,
     }
 )
 
@@ -37,6 +39,8 @@ CALLBACK_CRYPTO_TRX = "CryptoPayments_TRX"
 CALLBACK_CRYPTO_USDT = "CryptoPayments_USDT"
 CALLBACK_CRYPTO_TON = "CryptoPayments_TON"
 CALLBACK_STARS = "StarsPayment"
+CALLBACK_ZARINPAL = "ZarinpalPayment"
+CALLBACK_ZARINPAL_CHECK_PREFIX = "zarinpal_check:"
 CALLBACK_CART_PAYMENT = "cart_payment"
 CALLBACK_CART_PAYMENT_SENDPHOTO = "cart_payment_sendphoto"
 CALLBACK_FLOW_CANCEL = "balance_flow_cancel"

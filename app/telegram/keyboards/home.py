@@ -55,6 +55,9 @@ async def bhome_buttons(user_id, lang):
     menu_add_balance, menu_add_balance_style = await _get_keyboard_button_config(
         keyboard_crud, "bt.menu_add_balance", "💰 افزایش موجودی"
     )
+    menu_gift, menu_gift_style = await _get_keyboard_button_config(
+        keyboard_crud, "bt.menu_gift", "🎟 کد هدیه"
+    )
 
     menu_support, menu_support_style = await _get_keyboard_button_config(keyboard_crud, "bt.menu_support", "☎️ پشتیبانی")
     menu_uptime, menu_uptime_style = await _get_keyboard_button_config(
@@ -113,6 +116,9 @@ async def bhome_buttons(user_id, lang):
         balance_row.append(styled_reply_button(menu_profile, menu_profile_style))
     balance_row.append(styled_reply_button(menu_add_balance, menu_add_balance_style))
     bhome.append(balance_row)
+
+    if _home_menu_enabled(setting, "gift_mode"):
+        bhome.append([styled_reply_button(menu_gift, menu_gift_style)])
 
     utility_row = []
     if _home_menu_enabled(setting, "support_mode"):

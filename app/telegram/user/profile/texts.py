@@ -32,3 +32,20 @@ def profile_message(
         f"**🕒 تاریخ عضویت:** `{date_label}`\n"
         f"{discount_status}\n"
     )
+
+
+def referral_section_text(link: str, invite_count: int, earned: int, percent: int, first_bonus: int) -> str:
+    rules = []
+    if percent > 0:
+        rules.append(f"📈 سهم شما از هر شارژ: **{percent}%**")
+    if first_bonus > 0:
+        rules.append(f"🎉 پاداش اولین شارژ هر کاربر: **{first_bonus:,} تومان**")
+    rules_text = ("\n".join(rules)) if rules else "مقادیر پاداش توسط مدیریت تنظیم می‌شود."
+    return (
+        "\n**👥 زیرمجموعه‌گیری**\n"
+        f"🔗 **لینک اختصاصی شما:**\n`{link}`\n\n"
+        f"👥 **اعضای معرفی‌شده:** `{invite_count:,}`\n"
+        f"💰 **کل پاداش دریافتی:** `{earned:,}` تومان\n\n"
+        f"{rules_text}\n"
+        "با فرستادن لینک بالا برای دوستانتان، به‌ازای هر شارژ موفق پاداش می‌گیرید."
+    )

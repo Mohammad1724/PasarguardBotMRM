@@ -13,6 +13,7 @@ DEFAULT_HOME_MENU_SETTINGS: dict[str, Any] = {
     "help_mode": True,
     "support_mode": True,
     "advanced_settings_mode": True,
+    "gift_mode": False,
 }
 
 DEFAULT_CORE_SETTINGS: dict[str, Any] = {
@@ -42,6 +43,19 @@ DEFAULT_PAYMENT_SETTINGS: dict[str, Any] = {
     "arz_usd": 0,
     "arz_trx": 0,
     "arz_ton": 0,
+    "zarinpal_mode": False,
+    "zarinpal_merchant": "",
+    "zarinpal_sandbox": False,
+    "zarinpal_deposit_min": 20000,
+    "zarinpal_deposit_max": 50000000,
+    "stars_mode": False,
+    "stars_rate": 1500,
+    "stars_deposit_min": 50000,
+    "stars_deposit_max": 2000000,
+    "referral_enabled": False,
+    "referral_percent": 0,
+    "referral_first_bonus": 0,
+    "referral_min_deposit": 0,
 }
 
 DEFAULT_PURCHASE_SETTINGS: dict[str, Any] = {

@@ -25,6 +25,8 @@ def btn_cardtocard_settings(settings=None):
             Button.inline(text="💰 محدودیت کارت دستی", data="set_manual_limits"),
         ],
         [Button.inline(text="💰 محدودیت واریز ارزی", data="set_crypto_limits")],
+        [Button.inline(text="🏦 درگاه زرین‌پال", data="zarinpal_settings_menu"), Button.inline(text="⭐ پرداخت ستاره‌ای", data="stars_settings_menu")],
+        [Button.inline(text="👥 زیرمجموعه‌گیری", data="referral_settings_menu")],
         [Button.inline(text="🏷 حداقل شارژ نمایندگی", data="set_reseller_min_wallet")],
         [Button.inline(text="🎁 تنظیمات بونوس", data="bonus_settings_menu")],
         [Button.inline(text="💼 مدیریت کیف پول‌ها", data="wallet_management")],
@@ -137,3 +139,42 @@ def crypto_limit_back_button():
 
 def gateway_settings_buttons(settings):
     return btn_cardtocard_settings(settings)
+
+
+def zarinpal_settings_buttons(settings):
+    enabled_text = "✅ درگاه روشن" if settings and settings.zarinpal_mode else "❌ درگاه خاموش"
+    sandbox_text = (
+        "🧪 محیط آزمایشی (فعال)" if settings and settings.zarinpal_sandbox else "🌐 محیط اصلی (فعال)"
+    )
+    return [
+        [Button.inline(text=enabled_text, data="toggle_zarinpal_mode")],
+        [Button.inline(text="🔐 تنظیم مرچنت کد", data="set_zarinpal_merchant")],
+        [Button.inline(text=sandbox_text, data="toggle_zarinpal_sandbox")],
+        [Button.inline(text="💰 محدودیت واریز زرین‌پال", data="set_zarinpal_limits")],
+        [Button.inline("🔙 بازگشت", data="BackTOSettingsCardToCard")],
+    ]
+
+
+def stars_settings_buttons(settings):
+    enabled_text = "✅ ستاره‌ای روشن" if settings and settings.stars_mode else "❌ ستاره‌ای خاموش"
+    rate = int(getattr(settings, "stars_rate", 0) or 0)
+    return [
+        [Button.inline(text=enabled_text, data="toggle_stars_mode")],
+        [Button.inline(text=f"📝 نرخ هر ستاره: {rate:,} تومان", data="set_stars_rate")],
+        [Button.inline(text="💰 محدودیت واریز ستاره‌ای", data="set_stars_limits")],
+        [Button.inline("🔙 بازگشت", data="BackTOSettingsCardToCard")],
+    ]
+
+
+def referral_settings_buttons(settings):
+    enabled_text = "✅ زیرمجموعه روشن" if settings and settings.referral_enabled else "❌ زیرمجموعه خاموش"
+    percent = int(getattr(settings, "referral_percent", 0) or 0)
+    first_bonus = int(getattr(settings, "referral_first_bonus", 0) or 0)
+    min_deposit = int(getattr(settings, "referral_min_deposit", 0) or 0)
+    return [
+        [Button.inline(text=enabled_text, data="toggle_referral_enabled")],
+        [Button.inline(text=f"📈 درصد پاداش: {percent}%", data="set_referral_percent")],
+        [Button.inline(text=f"🎉 پاداش اولین شارژ: {first_bonus:,} تومان", data="set_referral_first_bonus")],
+        [Button.inline(text=f"📉 حداقل مبلغ شارژ: {min_deposit:,} تومان", data="set_referral_min_deposit")],
+        [Button.inline("🔙 بازگشت", data="BackTOSettingsCardToCard")],
+    ]

@@ -143,6 +143,17 @@ class TransactionCRUD:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
+    async def sum_user_transactions(self, user_id: int, status: str = "approved", method: str | None = None) -> int:
+        async with Session() as session:
+            stmt = select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
+                Transaction.status == status,
+            )
+            if method:
+                stmt = stmt.where(Transaction.method == method)
+            result = await session.execute(stmt)
+            return int(result.scalar() or 0)
+
     async def sum_transactions(
         self,
         start: int | None = None,
