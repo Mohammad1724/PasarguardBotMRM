@@ -136,17 +136,6 @@ async def bhome_buttons(user_id, lang):
     from app.services.admin_app.layout import arrange_home
 
     bhome = await arrange_home(bhome)
-    # A fixed customer entry survives layouts saved before the customer portal existed.
-    from fastapi import HTTPException
-
-    from app.services.customer_app import CUSTOMER_APP_LABEL, url as customer_url
-
-    try:
-        customer_url()
-    except HTTPException:
-        pass  # HTTPS has not been configured yet.
-    else:
-        bhome.append([styled_reply_button(CUSTOMER_APP_LABEL)])
     return ReplyKeyboardMarkup([KeyboardButtonRow(button) for button in bhome], resize=True)
 
 

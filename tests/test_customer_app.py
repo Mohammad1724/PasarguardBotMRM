@@ -269,14 +269,15 @@ async def test_customer_telegram_button_is_signed_inline_and_keeps_custom_port(w
     assert not module.matches(e)
 
 
-async def test_customer_home_entry_survives_old_custom_layout(web):
+@pytest.mark.parametrize("uid", [1, 2])
+async def test_customer_home_has_no_extra_miniapp_button(web, uid):
     from app.db.models.admin_app import AdminState
     from app.telegram.keyboards.home import bhome_buttons
 
     async with Session() as session, session.begin():
         (await session.get(AdminState, 1)).layout = [["bt.menu_my_services"], ["bt.menu_add_balance"]]
-    rows = await bhome_buttons(2, "fa")
-    assert customer.CUSTOMER_APP_LABEL in [b.text for row in rows.rows for b in row.buttons]
+    rows = await bhome_buttons(uid, "fa")
+    assert customer.CUSTOMER_APP_LABEL not in [b.text for row in rows.rows for b in row.buttons]
 
 
 def test_customer_client_no_storage_and_same_origin_admin_fallback():
