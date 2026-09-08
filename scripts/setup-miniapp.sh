@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Standalone launcher; changes are performed only after Python preflight checks.
 set -euo pipefail
+export LC_ALL=C
 if [[ "${EUID:-$(id -u)}" != 0 ]]; then
-    echo 'Run this downloaded file with sudo: sudo bash setup-miniapp.sh [domain]' >&2
+    echo 'Run this downloaded file with sudo: sudo bash setup-miniapp.sh [domain] [--https-port PORT]' >&2
     exit 1
 fi
 command -v apt-get >/dev/null || { echo 'Automatic setup supports Debian/Ubuntu hosts.' >&2; exit 1; }

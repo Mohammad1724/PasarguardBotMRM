@@ -37,10 +37,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMR
 
 ### راه‌اندازی ساده مینی‌اپ نسخه سوم
 
-در نصب Docker یا Native نسخه سوم روی Debian/Ubuntu، با مدیر جدید فقط دامنه را وارد کنید:
+در نصب Docker یا Native نسخه سوم روی Debian/Ubuntu، با مدیر 1.2.19 به بعد، دامنه و پورت HTTPS دلخواه را وارد کنید؛ Enter پورت پیش‌فرض 443 را انتخاب می‌کند. ترمینال انگلیسی است:
 
 ```bash
 sudo pasarguardbot miniapp
+# Or specify both values:
+sudo pasarguardbot miniapp admin.example.com --https-port 8443
 ```
 
 مدیر قدیمی ابتدا `sudo env PASARGUARDBOT_BRANCH=main pasarguardbot update-script` می‌خواهد. HTTPS موجود سازگار استفاده می‌شود یا گواهی Let's Encrypt و تمدید خودکار آماده می‌شوند؛ DNS باید از قبل به سرور برسد. [فرمان مستقل یک‌مرحله‌ای، پیش‌نیازها و محدودیت‌های ایمنی](MINIAPP_SETUP.fa.md).

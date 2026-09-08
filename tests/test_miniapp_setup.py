@@ -2,6 +2,7 @@
 
 import ast
 import json
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -200,13 +201,17 @@ def test_journal_refuses_symlink(tmp_path):
 
 
 class FakeSetup(m.Setup):
-    def __init__(self, root, nginx_root, *, existing=True, fail=None):
-        super().__init__("admin.example.com", root)
+    def __init__(self, root, nginx_root, *, existing=True, fail=None, https_port=443):
+        super().__init__("admin.example.com", root, https_port=https_port)
         self.nginx = str(nginx_root / "nginx")
         Path(self.nginx).touch()
         self.original_site = nginx_root / "site.conf"
         if existing:
-            self.original_site.write_text(site("location /payment { return 200 'preserved'; }"))
+            self.original_site.write_text(
+                site("location /payment { return 200 'preserved'; }").replace(
+                    "listen 443 ssl;", f"listen {https_port} ssl;"
+                )
+            )
         self.commands, self.probes = [], []
         self.fail = fail
         self.cert_requested = False
@@ -216,6 +221,7 @@ class FakeSetup(m.Setup):
         self.port = m.api_port(self.content)
         self.host_port = self.port
         self.image = "sha256:synthetic"
+        self.check_public_port()
 
     def run(self, args, timeout=120, check=True):
         self.commands.append(args)
@@ -338,7 +344,7 @@ def test_host_helper_stays_python310_and_shell_syntax_valid():
     assert "PASARGUARDBOT_SETUP_BRANCH:-main" in launcher
     script = (root / "scripts/pasarguardbot.sh").read_text()
     assert 'branch="${PASARGUARDBOT_SETUP_BRANCH:-main}"' in script
-    assert "11) action_miniapp" in script and 'miniapp)        action_miniapp "${2:-}"' in script
+    assert "11) action_miniapp" in script and 'miniapp)        action_miniapp "${@:2}"' in script
 
 
 def test_rollback_does_not_overwrite_concurrent_changes(tmp_path):
@@ -514,3 +520,215 @@ def test_native_stops_only_bot_on_rollback_conflict(host):
     setup = FakeNative(*host)
     setup.stop_bot()
     assert setup.commands == [["systemctl", "stop", "pasarguardbot.service"]]
+
+
+@pytest.mark.parametrize(
+    "value", ["0", "65536", "-1", "80", "abc", "443;shutdown", "8443\nallow all", "۴۴۳", "", True, "8443.0"]
+)
+def test_invalid_https_port_fails_closed(value):
+    with pytest.raises(m.SetupError):
+        m.public_port(value)
+
+
+@pytest.mark.parametrize(
+    "value,expected", [(443, 443), ("8443", 8443), (" 9443 ", 9443), ("65535", 65535), ("00443", 443)]
+)
+def test_https_port_validation(value, expected):
+    assert m.public_port(value) == expected
+
+
+def test_custom_port_env_is_idempotent_and_api_unchanged():
+    original = "BOT_TOKEN=synthetic\nFASTAPI_PORT=8123\nADMIN_MINI_APP_URL=https://old.example.com/admin\n"
+    changed = m.update_env(original, "admin.example.com", 8123, 8443)
+    assert "ADMIN_MINI_APP_URL=https://admin.example.com:8443/admin\n" in changed
+    assert "BOT_TOKEN=synthetic\n" in changed and m.api_port(changed) == 8123
+    assert m.update_env(changed, "admin.example.com", 8123, 8443) == changed
+    assert "https://admin.example.com/admin" in m.update_env(changed, "admin.example.com", 8123)
+
+
+def test_custom_vhost_listeners_redirect_and_acme(tmp_path):
+    config = m.vhost("admin.example.com", tmp_path, tmp_path / "snippet", "cert", 8443)
+    assert "listen 8443 ssl;" in config and "listen [::]:8443 ssl;" in config
+    assert "listen 443" not in config and "listen [::]:443" not in config
+    assert "return 301 https://admin.example.com:8443$request_uri;" in config
+    assert "listen 80;" in config and "location ^~ /.well-known/acme-challenge/" in config
+    assert "ssl_certificate /etc/letsencrypt/live/cert/fullchain.pem;" in config
+    assert "proxy_set_header Host $http_host;" in m.route_config(8123, "/admin/proof", "proof")
+    m.nginx_nodes(config)
+
+
+@pytest.mark.parametrize("listen", ["8443", "[::]:8443", "127.0.0.1:8443", "*:8443"])
+def test_existing_https_matches_selected_port_only(tmp_path, listen):
+    old = site().replace("listen 443 ssl;", f"listen {listen} ssl;")
+    path = tmp_path / "site.conf"
+    snippet = tmp_path / "snippet"
+    assert m.existing_server({path: old}, "admin.example.com", snippet, 8443)[0] == path
+    with pytest.raises(m.SetupError):
+        m.existing_server({path: old}, "admin.example.com", snippet, 443)
+
+
+def test_same_domain_other_port_is_not_edited(tmp_path):
+    old443 = site("location /admin { return 404; }")
+    old8443 = site("location /payment { return 200 'keep'; }").replace("listen 443 ssl;", "listen 8443 ssl;")
+    path, snippet = tmp_path / "site", tmp_path / "snippet"
+    result = m.existing_server({path: old443 + old8443}, "admin.example.com", snippet, 8443)[1]
+    assert result.startswith(old443)
+    assert result.replace(f"\n    include {snippet};\n", "") == old443 + old8443
+
+
+@pytest.mark.parametrize("factory", [FakeSetup, FakeNative])
+@pytest.mark.parametrize("existing", [True, False])
+def test_custom_https_setup_on_both_install_modes(host, monkeypatch, capsys, factory, existing):
+    monkeypatch.setattr(m.shutil, "which", lambda name: "/synthetic/" + name)
+    setup = factory(*host, existing=existing, https_port=8443)
+    original_run = setup.run
+
+    def run(args, **kwargs):
+        result = original_run(args, **kwargs)
+        if args == ["ufw", "status"]:
+            result.stdout = "Status: active"
+        return result
+
+    setup.run = run
+    setup.execute()
+    assert "ADMIN_MINI_APP_URL=https://admin.example.com:8443/admin" in setup.env.read_text()
+    assert m.api_port(setup.env.read_text()) == 8123
+    assert all(url.startswith("https://admin.example.com:8443/") for url in setup.probes if url.startswith("https:"))
+    assert ["ufw", "allow", "8443/tcp"] in setup.commands
+    assert ["ufw", "allow", "443/tcp"] not in setup.commands
+    assert (["ufw", "allow", "80/tcp"] in setup.commands) is (not existing)
+    assert not any(args[0] == "ss" and args[-1] == "sport = :443" for args in setup.commands)
+    if existing:
+        assert not setup.cert_requested
+        assert not any(args[0] == "ss" and args[-1] == "sport = :80" for args in setup.commands)
+    else:
+        config = next((host[1] / "conf.d").glob("*.conf")).read_text()
+        assert "listen 8443 ssl;" in config and "listen 443 ssl;" not in config
+    output = capsys.readouterr()
+    assert "Ready: https://admin.example.com:8443/admin" in output.out
+    assert not re.search("[\u0600-\u06ff]", output.out + output.err)
+
+
+@pytest.mark.parametrize("factory", [FakeSetup, FakeNative])
+def test_custom_port_rollback_restores_previous_url(host, factory):
+    setup = factory(*host, https_port=8443, fail="backend")
+    setup.env.write_text(setup.env.read_text() + "ADMIN_MINI_APP_URL=https://admin.example.com:9443/admin\n")
+    old_env = setup.env.read_bytes()
+    old_site = setup.original_site.read_bytes()
+    with pytest.raises(m.SetupError):
+        setup.execute()
+    assert setup.env.read_bytes() == old_env and setup.original_site.read_bytes() == old_site
+
+
+@pytest.mark.parametrize("https_port,api_port,host_port", [(8123, 8123, 6160), (6160, 8123, 6160)])
+def test_public_port_cannot_collide_with_api(host, https_port, api_port, host_port):
+    setup = FakeSetup(*host, https_port=https_port)
+    setup.port, setup.host_port = api_port, host_port
+    with pytest.raises(m.SetupError, match="must differ"):
+        setup.check_public_port()
+    assert not setup.commands
+
+
+def test_occupied_443_is_irrelevant_to_custom_https_port(host):
+    setup = FakeSetup(*host, https_port=8443)
+    setup.port = setup.host_port = 8123
+    commands = []
+
+    def run(args, **kwargs):
+        commands.append(args)
+        return SimpleNamespace(stdout='LISTEN users:(("other",pid=1,fd=3))' if args[-1] == "sport = :443" else "")
+
+    setup.run = run
+    setup.check_public_port()
+    assert commands == [["ss", "-H", "-ltnp", "sport = :8443"]]
+
+
+def test_occupied_selected_port_refused_before_files_change(host):
+    setup = FakeSetup(*host, https_port=8443)
+    setup.run = lambda *args, **kwargs: SimpleNamespace(stdout='LISTEN users:(("other",pid=1,fd=3))')
+    old_env = setup.env.read_bytes()
+    with pytest.raises(m.SetupError, match="Port 8443"):
+        setup.execute()
+    assert setup.env.read_bytes() == old_env and not setup.state.exists()
+
+
+@pytest.mark.parametrize(
+    "argv,interactive,answers,expected",
+    [
+        (["setup"], True, ["admin.example.com", "8443"], 8443),
+        (["setup"], True, ["admin.example.com", ""], 443),
+        (["setup", "admin.example.com", "--https-port", "9443"], True, [], 9443),
+        (["setup", "admin.example.com"], False, [], 443),
+    ],
+)
+def test_cli_port_prompt_and_explicit_flag(tmp_path, monkeypatch, capsys, argv, interactive, answers, expected):
+    monkeypatch.setattr(m.sys, "argv", argv)
+    monkeypatch.setattr(m.sys.stdin, "isatty", lambda: interactive)
+    monkeypatch.setattr(m.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(m, "ROOT", tmp_path / "bot")
+    prompts, calls = [], []
+    iterator = iter(answers)
+
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(iterator)
+
+    monkeypatch.setattr("builtins.input", ask)
+    monkeypatch.setattr(
+        m, "Setup", lambda domain, https_port: SimpleNamespace(execute=lambda: calls.append((domain, https_port)))
+    )
+    assert m.main() == 0
+    assert calls == [("admin.example.com", expected)]
+    assert ("HTTPS port [443]: " in prompts) == bool(answers)
+    output = capsys.readouterr()
+    assert not re.search("[\u0600-\u06ff]", output.out + output.err + "".join(prompts))
+
+
+def test_invalid_cli_port_reports_english_error_without_changes(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(m.sys, "argv", ["setup", "admin.example.com", "--https-port", "80"])
+    monkeypatch.setattr(m.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(m, "ROOT", tmp_path / "bot")
+    assert m.main() == 1
+    assert not (tmp_path / "bot").exists()
+    assert "Error: Port 80 is reserved" in capsys.readouterr().err
+
+
+def test_setup_terminal_scripts_have_no_persian_messages():
+    root = Path(__file__).resolve().parents[1]
+    for name in ("setup_miniapp.py", "setup-miniapp.sh", "pasarguardbot.sh"):
+        assert not re.search("[\u0600-\u06ff]", (root / "scripts" / name).read_text())
+    manager = (root / "scripts/pasarguardbot.sh").read_text()
+    assert 'bash "$tmp" "$@"' in manager
+    assert "--https-port PORT" in manager
+
+
+def test_managed_site_port_change_reuses_file_and_certificate_name(host):
+    first = FakeSetup(*host, existing=False)
+    first.execute()
+    old_site = next((host[1] / "conf.d").glob("*.conf"))
+    original_cert = next(args for args in first.commands if args[0] == "certbot")
+    second = FakeSetup(*host, existing=False, https_port=8443)
+    second.execute()
+    assert list((host[1] / "conf.d").glob("*.conf")) == [old_site]
+    assert "listen 8443 ssl;" in old_site.read_text() and "listen 443 ssl;" not in old_site.read_text()
+    assert "https://admin.example.com:8443/admin" in second.env.read_text()
+    new_cert = next(args for args in second.commands if args[0] == "certbot")
+    assert original_cert[original_cert.index("--cert-name") + 1] == new_cert[new_cert.index("--cert-name") + 1]
+
+
+def test_foreign_http_port_prevents_new_certificate_without_env_changes(host):
+    setup = FakeSetup(*host, existing=False, https_port=8443)
+    original = setup.env.read_bytes()
+    real_run = setup.run
+
+    def run(args, **kwargs):
+        result = real_run(args, **kwargs)
+        if args[0] == "ss" and args[-1] == "sport = :80":
+            result.stdout = 'LISTEN users:(("other",pid=1,fd=3))'
+        return result
+
+    setup.run = run
+    with pytest.raises(m.SetupError, match="Port 80"):
+        setup.execute()
+    assert setup.env.read_bytes() == original and not setup.cert_requested
+    assert not any(args[0] == "systemctl" and args[1] in {"stop", "restart"} for args in setup.commands)

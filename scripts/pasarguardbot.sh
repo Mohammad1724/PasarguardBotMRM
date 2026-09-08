@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── Paths & constants ──────────────────────────────────────────────────────────
-readonly SCRIPT_VERSION="1.2.18"
+readonly SCRIPT_VERSION="1.2.19"
 readonly CONFIG_DIR="/opt/pasarguardbot"
 readonly COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
 readonly ENV_FILE="${CONFIG_DIR}/.env"
@@ -1203,7 +1203,7 @@ draw_menu() {
     else
         echo -e "${C_BOLD}  │${C_RESET} 10) Fix Docker network                     ${C_BOLD}│${C_RESET}"
     fi
-    echo -e "${C_BOLD}  │${C_RESET} 11) Setup Mini App (domain + HTTPS)         ${C_BOLD}│${C_RESET}"
+    echo -e "${C_BOLD}  │${C_RESET} 11) Setup Mini App (domain + port)          ${C_BOLD}│${C_RESET}"
     echo -e "${C_BOLD}  │${C_RESET}  0) Exit                                   ${C_BOLD}│${C_RESET}"
     echo -e "${C_BOLD}  └─────────────────────────────────────────┘${C_RESET}"
     echo
@@ -3031,7 +3031,7 @@ action_restore() {
 
 # Mini App setup is host-side: no image update or database replacement required.
 action_miniapp() {
-    local domain="${1:-}" branch tmp status=0
+    local branch tmp status=0
     case "$(get_install_mode)" in
         docker|native) ;;
         *) die "A supported Docker or Native installation is required." ;;
@@ -3045,11 +3045,7 @@ action_miniapp() {
         die "Mini App setup download failed; no bot settings changed."
     fi
     bash -n "$tmp" || { rm -f "$tmp"; die "Mini App setup script is invalid."; }
-    if [[ -n "$domain" ]]; then
-        PASARGUARDBOT_SETUP_BRANCH="$branch" bash "$tmp" "$domain" || status=$?
-    else
-        PASARGUARDBOT_SETUP_BRANCH="$branch" bash "$tmp" || status=$?
-    fi
+    PASARGUARDBOT_SETUP_BRANCH="$branch" bash "$tmp" "$@" || status=$?
     rm -f "$tmp"
     return "$status"
 }
@@ -3087,7 +3083,7 @@ case "${1:-}" in
         purge_pasarguardbot_everything
         ;;
     update)         action_update ;;
-    miniapp)        action_miniapp "${2:-}" ;;
+    miniapp)        action_miniapp "${@:2}" ;;
     update-script)  action_update_script ;;
     logs)           action_logs_live ;;
     restart)        action_restart ;;
@@ -3100,7 +3096,7 @@ case "${1:-}" in
         ;;
     ""|menu)        main_menu ;;
     *)
-        echo "Usage: pasarguardbot [install|uninstall|purge|update|update-script|logs|restart|status|urls|restore <backup.zip>|miniapp [domain]|menu]"
+        echo "Usage: pasarguardbot [install|uninstall|purge|update|update-script|logs|restart|status|urls|restore <backup.zip>|miniapp [domain] [--https-port PORT]|menu]"
         exit 1
         ;;
 esac

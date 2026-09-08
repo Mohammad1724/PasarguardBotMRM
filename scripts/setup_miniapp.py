@@ -37,21 +37,21 @@ class SetupError(Exception):
 
 def domain_name(value):
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
-        raise SetupError("کاراکتر کنترلی در دامنه مجاز نیست.")
+        raise SetupError("Control characters are not allowed in the domain.")
     value = value.strip().lower()
     try:
         parsed = urlsplit(value if "://" in value else "https://" + value)
         port = parsed.port
     except ValueError as exc:
-        raise SetupError("آدرس دامنه معتبر نیست.") from exc
+        raise SetupError("Invalid domain address.") from exc
     if parsed.scheme != "https" or parsed.username or parsed.password or port or parsed.query or parsed.fragment:
-        raise SetupError("فقط نام دامنه یا آدرس HTTPS بدون پورت، رمز و پارامتر وارد کنید.")
+        raise SetupError("Enter a domain or HTTPS URL without a port, credentials, query or fragment.")
     if parsed.path not in ("", "/", "/admin", "/admin/") or not parsed.hostname:
-        raise SetupError("نمونه دامنه معتبر: admin.example.com")
+        raise SetupError("Example domain: admin.example.com")
     try:
         domain = parsed.hostname.rstrip(".").encode("idna").decode("ascii")
     except UnicodeError as exc:
-        raise SetupError("نام دامنه معتبر نیست.") from exc
+        raise SetupError("Invalid domain name.") from exc
     labels = domain.split(".")
     if (
         len(domain) > 253
@@ -59,28 +59,43 @@ def domain_name(value):
         or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels)
         or labels[-1].isdigit()
     ):
-        raise SetupError("یک دامنه عمومی معتبر وارد کنید؛ IP و localhost پذیرفته نیستند.")
+        raise SetupError("Enter a valid public domain; IP addresses and localhost are not supported.")
     if labels[-1] in {"localhost", "local", "internal", "invalid", "test", "example"}:
-        raise SetupError("دامنه باید عمومی و قابل دریافت گواهی باشد.")
+        raise SetupError("The domain must be public and eligible for a certificate.")
     return domain
 
 
 def api_port(content):
     values = re.findall(r"(?m)^[ \t]*(?:export[ \t]+)?FASTAPI_PORT[ \t]*=[ \t]*([^\n]*)", content)
     if len(values) > 1:
-        raise SetupError("FASTAPI_PORT چند بار در .env تعریف شده؛ ابتدا آن را یکسان کنید.")
+        raise SetupError("FASTAPI_PORT is defined more than once in .env; resolve the duplicates first.")
     value = values[0].strip() if values else ""
     # Only simple numeric dotenv values are supported; never evaluate shell text.
     value = re.sub(r"\s+#.*$", "", value).strip().strip("\"'")
     if not value:
         return 6160
     if not value.isascii() or not value.isdecimal() or not 1024 <= int(value) <= 65535:
-        raise SetupError("FASTAPI_PORT باید یک پورت عددی بین 1024 و 65535 باشد؛ پورت موجود را کورکورانه عوض نکنید.")
+        raise SetupError("FASTAPI_PORT must be a number from 1024 to 65535; do not blindly change the existing port.")
     return int(value)
 
 
-def update_env(content, domain, port):
-    values = {"FASTAPI_PORT": str(port), "ADMIN_MINI_APP_URL": "https://" + domain + "/admin"}
+def public_port(value):
+    text = str(value).strip()
+    if not text.isascii() or not text.isdecimal() or not 1 <= int(text) <= 65535:
+        raise SetupError("HTTPS port must be a number from 1 to 65535.")
+    port = int(text)
+    if port == 80:
+        raise SetupError("Port 80 is reserved for HTTP certificate validation; choose another HTTPS port.")
+    return port
+
+
+def https_origin(domain, https_port=443):
+    port = public_port(https_port)
+    return "https://" + domain + (f":{port}" if port != 443 else "")
+
+
+def update_env(content, domain, port, https_port=443):
+    values = {"FASTAPI_PORT": str(port), "ADMIN_MINI_APP_URL": https_origin(domain, https_port) + "/admin"}
     output = []
     for line in content.splitlines(keepends=True):
         match = re.match(r"^\s*(?:export\s+)?([A-Z_]+)\s*=", line)
@@ -99,13 +114,13 @@ def nginx_nodes(text):
     cursor = 0
     for match in TOKEN.finditer(text):
         if match.start() != cursor:
-            raise SetupError("قالب Nginx برای ویرایش خودکار پشتیبانی نمی‌شود.")
+            raise SetupError("Unsupported Nginx syntax for automatic editing.")
         cursor = match.end()
         value = match[0]
         if not value.isspace() and not value.startswith("#"):
             tokens.append((value.strip("\"'"), match.start(), match.end(), value in {"{", "}", ";"}))
     if cursor != len(text):
-        raise SetupError("قالب Nginx برای ویرایش خودکار پشتیبانی نمی‌شود.")
+        raise SetupError("Unsupported Nginx syntax for automatic editing.")
     position = 0
 
     def parse(nested=False):
@@ -116,11 +131,11 @@ def nginx_nodes(text):
             position += 1
             if control and value == "}":
                 if not nested or words:
-                    raise SetupError("ساختار Nginx نامعتبر یا پیچیده است.")
+                    raise SetupError("Invalid or complex Nginx structure.")
                 return nodes, start, end
             if control and value in (";", "{"):
                 if not words:
-                    raise SetupError("ساختار Nginx پشتیبانی نمی‌شود.")
+                    raise SetupError("Unsupported Nginx structure.")
                 node = {"name": words[0], "args": words[1:], "children": None, "close": None}
                 if value == "{":
                     node["children"], node["close"], _ = parse(True)
@@ -129,7 +144,7 @@ def nginx_nodes(text):
             else:
                 words.append(value)
         if nested or words:
-            raise SetupError("ساختار Nginx ناقص است.")
+            raise SetupError("Incomplete Nginx structure.")
         return nodes, None, None
 
     return parse()[0]
@@ -151,7 +166,7 @@ def expanded_includes(nodes, files, snippet, seen=()):
         if node["args"] == [str(snippet)]:
             continue
         if len(node["args"]) != 1 or "$" in node["args"][0]:
-            raise SetupError("include پویا یا نامعتبر؛ تنظیم خودکار متوقف شد.")
+            raise SetupError("Dynamic or invalid include; automatic setup stopped.")
         pattern = Path(node["args"][0])
         if not pattern.is_absolute():
             pattern = NGINX_ROOT / pattern
@@ -160,13 +175,14 @@ def expanded_includes(nodes, files, snippet, seen=()):
             matches.add(pattern.resolve())
         for path in matches:
             if path in seen or path not in files:
-                raise SetupError("include پیچیده یا خارج از پیکربندی بارگذاری‌شده؛ تنظیم خودکار متوقف شد.")
+                raise SetupError("Complex include or file outside the loaded configuration; automatic setup stopped.")
             result.extend(expanded_includes(nginx_nodes(files[path]), files, snippet, (*seen, path)))
     return result
 
 
-def existing_server(files, domain, snippet):
+def existing_server(files, domain, snippet, https_port=443):
     """Return one explicit HTTPS server. Refuse aliases/regex/collisions, never replace them."""
+    https_port = public_port(https_port)
     found = []
     ambiguous = False
     for path, text in files.items():
@@ -185,24 +201,36 @@ def existing_server(files, domain, snippet):
                     ambiguous = True
                 continue
             if any(name != domain for name in names):
-                raise SetupError("دامنه در میزبان مشترک با نام‌های دیگر است؛ از میزبان اختصاصی استفاده کنید.")
-            tls = any(child["name"] == "listen" and "ssl" in child["args"] for child in children)
+                raise SetupError("The domain shares a virtual host with other names; use a dedicated host.")
+            # Reuse only a TLS server actually listening on the requested port.
+            # IPv4, IPv6 and wildcard TCP endpoints are supported, never Unix sockets.
+            tls = any(
+                child["name"] == "listen"
+                and "ssl" in child["args"]
+                and not child["args"][0].startswith("unix:")
+                and child["args"][0].rsplit(":", 1)[-1] == str(https_port)
+                for child in children
+            )
             found.append((path, text, node, tls))
     if not found:
         if ambiguous:
-            raise SetupError("دامنه ممکن است با میزبان wildcard/regex موجود تداخل داشته باشد؛ تعریف اختصاصی لازم است.")
+            raise SetupError(
+                "The domain may conflict with an existing wildcard/regex host; use an explicit dedicated host."
+            )
         return None
     targets = [row for row in found if row[3]]
     if len(targets) != 1:
-        raise SetupError("دامنه در Nginx موجود است، ولی یک میزبان HTTPS مشخص ندارد. از زیردامنه اختصاصی استفاده کنید.")
+        raise SetupError(
+            "The domain exists in Nginx but has no unique HTTPS host on the selected port. Use a dedicated subdomain or configure the proxy manually."
+        )
     path, text, node, _ = targets[0]
     children = expanded_includes(node["children"], files, snippet)
     for child in children:
         if child["name"] in {"return", "rewrite", "auth_basic", "auth_request", "ssl_verify_client"}:
-            raise SetupError("میزبان فعلی محدودیت یا redirect سراسری دارد؛ بدون تغییر آن، زیردامنه اختصاصی بدهید.")
+            raise SetupError("The existing host has server-wide restrictions or redirects; use a dedicated subdomain.")
     for child in descendants(children):
         if child["name"] == "location" and any("admin" in arg.lower() for arg in child["args"]):
-            raise SetupError("مسیر admin از قبل در این دامنه استفاده شده؛ برای جلوگیری از تداخل، زیردامنه تازه بدهید.")
+            raise SetupError("An admin route already exists on this domain; use a new subdomain to avoid conflicts.")
     if any(child["name"] == "include" and child["args"] == [str(snippet)] for child in node["children"]):
         return path, text
     return path, text[: node["close"]] + f"\n    include {snippet};\n" + text[node["close"] :]
@@ -211,7 +239,7 @@ def existing_server(files, domain, snippet):
 def route_config(host_port, probe_path, proof):
     proxy = (
         f"        proxy_pass http://127.0.0.1:{host_port};\n"
-        "        proxy_set_header Host $host;\n"
+        "        proxy_set_header Host $http_host;\n"
         "        proxy_set_header X-Forwarded-Proto $scheme;\n"
         "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
         "        proxy_cache off;\n"
@@ -225,15 +253,17 @@ def route_config(host_port, probe_path, proof):
     )
 
 
-def vhost(domain, webroot, snippet, cert_name=None):
+def vhost(domain, webroot, snippet, cert_name=None, https_port=443):
+    https_port = public_port(https_port)
+    origin = https_origin(domain, https_port)
     challenge = f"    location ^~ /.well-known/acme-challenge/ {{ root {webroot}; }}\n"
     http = MARKER + f"\nserver {{\n    listen 80;\n    listen [::]:80;\n    server_name {domain};\n" + challenge
     if cert_name is None:
         return http + "    location / { return 404; }\n}\n"
     cert = "/etc/letsencrypt/live/" + cert_name
     return (
-        http + f"    location / {{ return 301 https://{domain}$request_uri; }}\n}}\n"
-        f"server {{\n    listen 443 ssl;\n    listen [::]:443 ssl;\n    server_name {domain};\n"
+        http + f"    location / {{ return 301 {origin}$request_uri; }}\n}}\n"
+        f"server {{\n    listen {https_port} ssl;\n    listen [::]:{https_port} ssl;\n    server_name {domain};\n"
         f"    ssl_certificate {cert}/fullchain.pem;\n    ssl_certificate_key {cert}/privkey.pem;\n"
         "    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_session_cache shared:PguardMiniApp:1m;\n"
         f"    include {snippet};\n"
@@ -250,7 +280,7 @@ class Journal:
 
     def write(self, path, content, mode=0o644):
         if path.is_symlink():
-            raise SetupError("فایل مقصد پیوند نمادین است؛ برای ایمنی متوقف شد.")
+            raise SetupError("The target file is a symlink; stopped for safety.")
         if path not in self.entries:
             original = path.read_bytes() if path.exists() else None
             old_stat = path.stat() if path.exists() else None
@@ -294,7 +324,7 @@ def install_mode(root):
     else:
         mode = ""
     if mode not in {"docker", "native"}:
-        raise SetupError("نوع نصب مشخص نیست؛ فایل .install_mode را با نصب واقعی تطبیق دهید.")
+        raise SetupError("Unknown installation mode; check .install_mode against the actual installation.")
     return mode
 
 
@@ -308,8 +338,10 @@ def cgroup_contains(text, group):
 
 
 class Setup:
-    def __init__(self, domain, root=ROOT):
+    def __init__(self, domain, root=ROOT, https_port=443):
         self.domain, self.root = domain, root
+        self.https_port = public_port(https_port)
+        self.origin = https_origin(domain, self.https_port)
         self.env = root / ".env"
         self.mode = "docker"
         self.unit = "pasarguardbot.service"
@@ -342,50 +374,66 @@ class Setup:
             with self.log.open("a") as handle:
                 handle.write("\n$ " + " ".join(args) + "\n" + result.stdout + result.stderr)
         if result.returncode and check:
-            raise SetupError(f"مرحله {args[0]} ناموفق بود. گزارش خصوصی سرور را بررسی کنید.")
+            raise SetupError(f"Command {args[0]} failed. Check the private server log.")
         return result
 
     def preflight(self):
         if os.geteuid() != 0:
-            raise SetupError("این ابزار را با sudo اجرا کنید.")
+            raise SetupError("Run this tool with sudo.")
         if not shutil.which("apt-get") or not Path("/run/systemd/system").is_dir():
-            raise SetupError("راه‌اندازی خودکار برای Docker یا Native روی Debian/Ubuntu دارای systemd است.")
+            raise SetupError("Automatic setup supports Docker or Native on Debian/Ubuntu with systemd.")
         if not self.env.is_file() or self.env.is_symlink():
-            raise SetupError("فایل .env نصب استاندارد در /opt/pasarguardbot پیدا نشد.")
+            raise SetupError("The standard installation .env was not found in /opt/pasarguardbot.")
         self.mode = install_mode(self.root)
         if self.root.is_symlink() or self.root.stat().st_uid != 0 or self.root.stat().st_mode & 0o022:
-            raise SetupError("پوشه نصب باید متعلق به root و غیرقابل‌نوشتن برای دیگران باشد.")
+            raise SetupError("The installation directory must be root-owned and not writable by others.")
         if self.state.is_symlink() or (self.state.exists() and self.state.stat().st_uid != 0):
-            raise SetupError("پوشه گزارش/بکاپ برای نوشتن امن نیست.")
+            raise SetupError("The log/backup directory is not safe to write.")
         self.content = self.env.read_text()
         self.port = api_port(self.content)
-        addresses = {row[4][0] for row in socket.getaddrinfo(self.domain, 443, type=socket.SOCK_STREAM)}
+        addresses = {row[4][0] for row in socket.getaddrinfo(self.domain, self.https_port, type=socket.SOCK_STREAM)}
         if not addresses or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
-            raise SetupError("DNS دامنه باید عمومی و متصل به این سرور باشد؛ IP خصوصی پذیرفته نیست.")
+            raise SetupError("DNS must resolve publicly to this server; private IP addresses are not accepted.")
         if self.mode == "native":
             self.preflight_native()
         else:
             self.preflight_docker()
-        for port in (80, 443):
-            listening = self.run(["ss", "-H", "-ltnp", f"sport = :{port}"]).stdout
-            if listening and (
-                not Path(self.nginx).is_file() or any('"nginx"' not in line for line in listening.splitlines())
-            ):
-                raise SetupError(
-                    f"پورت {port} در اختیار برنامه دیگری است (مثلاً Caddy/Nginx Proxy Manager). چیزی متوقف نشد؛ مسیر را در همان ابزار تنظیم کنید."
-                )
-        if Path(self.nginx).is_file():
+        self.check_public_port()
+        if not Path(self.nginx).is_file():
+            self.check_listener(80)
+        else:
             if self.run(["systemctl", "is-active", "nginx"], check=False).returncode:
                 raise SetupError(
-                    "Nginx موجود خاموش است؛ برای جلوگیری از فعال‌کردن تنظیمات نامعلوم، ابتدا آن را بررسی کنید."
+                    "Existing Nginx is inactive; inspect it first to avoid activating unknown configuration."
                 )
             self.run([self.nginx, "-t"])
 
+    def check_listener(self, port):
+        listening = self.run(["ss", "-H", "-ltnp", f"sport = :{port}"]).stdout
+        if listening and (
+            not Path(self.nginx).is_file() or any('"nginx"' not in line for line in listening.splitlines())
+        ):
+            raise SetupError(
+                f"Port {port} is owned by another application. Nothing was stopped; "
+                "choose another HTTPS port or configure routing in the existing proxy. "
+                "HTTP-01 certificate validation still requires port 80."
+            )
+
+    def check_public_port(self):
+        if self.https_port in {self.port, self.host_port}:
+            raise SetupError("The public HTTPS port must differ from the bot API and its host-mapped port.")
+        self.check_listener(self.https_port)
+
+    def allow_firewall(self, ports):
+        if shutil.which("ufw") and "Status: active" in self.run(["ufw", "status"]).stdout:
+            for port in ports:
+                self.run(["ufw", "allow", f"{port}/tcp"])
+
     def preflight_docker(self):
         if not (self.root / "docker-compose.yml").is_file():
-            raise SetupError("فایل Compose نصب Docker پیدا نشد.")
+            raise SetupError("The Docker Compose file was not found.")
         if self.run(["docker", "inspect", "pasarguardbot", "--format", "{{.State.Running}}"]).stdout.strip() != "true":
-            raise SetupError("ابتدا ربات نسخه سوم را روشن کنید؛ این ابزار نصب اولیه ربات نیست.")
+            raise SetupError("Start the version 3 bot first; this tool does not install the bot.")
         self.run(["docker", "exec", "pasarguardbot", "test", "-f", "/app/app/assets/admin_app/app.js"])
         self.image = self.run(["docker", "inspect", "pasarguardbot", "--format", "{{.Image}}"]).stdout.strip()
         self.check_image()
@@ -395,7 +443,9 @@ class Setup:
         bindings = ports.get(f"{self.port}/tcp") or []
         local = [b for b in bindings if b.get("HostIp") in ("127.0.0.1", "0.0.0.0", "")]
         if len(local) != 1 or not str(local[0]["HostPort"]).isdigit():
-            raise SetupError("پورت API ربات به لوپ‌بک میزبان نگاشت نشده؛ Compose سفارشی را دستی بررسی کنید.")
+            raise SetupError(
+                "The bot API port is not mapped to the host loopback; inspect custom Compose settings manually."
+            )
         self.host_port = int(local[0]["HostPort"])
 
     def native_unit(self, require_active=False):
@@ -412,15 +462,19 @@ class Setup:
         workdir = properties.get("WorkingDirectory", "")
         env_files = properties.get("EnvironmentFiles", "")
         if not workdir or Path(workdir).resolve() != (self.root / "app").resolve():
-            raise SetupError("WorkingDirectory سرویس Native با مسیر نصب استاندارد یکسان نیست؛ فایل سرویس تغییر نکرد.")
+            raise SetupError(
+                "Native WorkingDirectory does not match the standard installation; the unit was not changed."
+            )
         if env_files not in {str(self.env) + " (ignore_errors=yes)", str(self.env) + " (ignore_errors=no)"}:
             raise SetupError(
-                "EnvironmentFile سرویس Native باید همان .env نصب باشد؛ تنظیم سفارشی خودکار بازنویسی نمی‌شود."
+                "Native EnvironmentFile must use the installation .env; custom settings are not overwritten automatically."
             )
         if require_active and properties.get("ActiveState") != "active":
-            raise SetupError("ابتدا سرویس pasarguardbot.service را سالم و فعال کنید.")
+            raise SetupError("First ensure pasarguardbot.service is healthy and active.")
         if not (self.root / "app/app/assets/admin_app/app.js").is_file():
-            raise SetupError("سورس Native هنوز مینی‌اپ ندارد؛ ابتدا Update bot از main را انجام دهید، نه نصب مجدد.")
+            raise SetupError(
+                "Native source has no Mini App assets yet; run Update bot from main first, not a reinstall."
+            )
         return properties
 
     def preflight_native(self):
@@ -430,24 +484,26 @@ class Setup:
         for line in listening.splitlines():
             pids = set(re.findall(r"pid=(\d+)", line))
             if not pids:
-                raise SetupError("مالک پورت API مشخص نیست؛ هیچ سرویس دیگری متوقف نشد.")
+                raise SetupError("Cannot identify the API port owner; no other service was stopped.")
             for pid in pids:
                 try:
                     groups = Path(f"/proc/{pid}/cgroup").read_text()
                 except OSError as exc:
-                    raise SetupError("مالک پورت API تغییر کرد؛ دوباره تلاش کنید.") from exc
+                    raise SetupError("The API port owner changed; try again.") from exc
                 if not cgroup_contains(groups, properties.get("ControlGroup", "")):
-                    raise SetupError("پورت API در اختیار سرویس دیگری است؛ پورت یا آن سرویس خودکار تغییر نکرد.")
+                    raise SetupError(
+                        "Another service owns the API port; neither the port nor that service was changed."
+                    )
 
     def check_image(self):
         # Recreating for env must never silently upgrade to a newly pulled dev image.
         config = json.loads(self.run([*self.compose, "config", "--format", "json"]).stdout)
         reference = config["services"]["bot"].get("image")
         if not isinstance(reference, str) or not reference:
-            raise SetupError("ایمیج bot در Compose مشخص نیست.")
+            raise SetupError("The bot image is not defined in Compose.")
         current = self.run(["docker", "image", "inspect", reference, "--format", "{{.Id}}"]).stdout.strip()
         if current != self.image:
-            raise SetupError("ایمیج محلی با ربات در حال اجرا یکسان نیست؛ ابتدا ارتقای ربات را کامل کنید.")
+            raise SetupError("The local image differs from the running bot; finish the bot upgrade first.")
 
     def recreate_bot(self):
         if self.mode == "native":
@@ -487,7 +543,7 @@ class Setup:
                 pass
             if attempt + 1 < attempts:
                 time.sleep(2)
-        raise SetupError("آزمون آدرس موفق نشد؛ DNS، HTTPS و دسترسی پورت‌ها از اینترنت را بررسی کنید.")
+        raise SetupError("URL verification failed; check DNS, trusted HTTPS and public port access.")
 
     def execute(self):
         self.preflight()
@@ -506,7 +562,7 @@ class Setup:
         proof = secrets.token_hex(24)
         try:
             if not Path(self.nginx).is_file():
-                print("نصب Nginx…", flush=True)
+                print("Installing Nginx...", flush=True)
                 self.new_nginx = True
                 self.run(["apt-get", "update"], timeout=600)
                 self.run(["apt-get", "install", "-y", "--no-install-recommends", "nginx"], timeout=600)
@@ -514,33 +570,31 @@ class Setup:
             files = self.loaded_files()
             for managed in (snippet, site):
                 if managed.exists() and not managed.read_text().startswith(MARKER):
-                    raise SetupError("فایل هم‌نام موجود متعلق به این ابزار نیست؛ بازنویسی نشد.")
+                    raise SetupError("An existing file with the same name is not owned by this tool; not overwritten.")
             own_site = site.exists()
-            existing = None if own_site else existing_server(files, self.domain, snippet)
+            existing = None if own_site else existing_server(files, self.domain, snippet, self.https_port)
             if existing and NGINX_ROOT not in existing[0].parents:
-                raise SetupError("فایل میزبان Nginx خارج از /etc/nginx است؛ خودکار ویرایش نشد.")
+                raise SetupError("The Nginx host file is outside /etc/nginx; not edited automatically.")
+            if not existing:
+                self.check_listener(80)
             self.journal.write(snippet, route_config(self.host_port, probe_path, proof))
             if existing:
-                print("استفاده از HTTPS موجود؛ سایر مسیرهای دامنه حفظ می‌شوند…", flush=True)
+                print("Reusing existing HTTPS; other routes on the domain are preserved...", flush=True)
                 path, content = existing
                 if path.read_text() != files[path]:
-                    raise SetupError("پیکربندی Nginx هم‌زمان تغییر کرده؛ بازنویسی نشد.")
+                    raise SetupError("Nginx configuration changed concurrently; not overwritten.")
                 self.journal.write(path, content, stat.S_IMODE(path.stat().st_mode))
             else:
                 webroot.mkdir(mode=0o755, parents=True, exist_ok=True)
-                self.journal.write(site, vhost(self.domain, webroot, snippet))
+                self.journal.write(site, vhost(self.domain, webroot, snippet, https_port=self.https_port))
                 self.reload()
                 if site.resolve() not in self.loaded_files():
-                    raise SetupError("Nginx پوشه conf.d را بارگذاری نمی‌کند؛ تغییری به فایل اصلی تحمیل نشد.")
-                if shutil.which("ufw"):
-                    status = self.run(["ufw", "status"]).stdout
-                    if "Status: active" in status:
-                        self.run(["ufw", "allow", "80/tcp"])
-                        self.run(["ufw", "allow", "443/tcp"])
+                    raise SetupError("Nginx does not load conf.d; the main configuration was not forcibly changed.")
+                self.allow_firewall((80, self.https_port))
                 if not shutil.which("certbot"):
                     self.run(["apt-get", "update"], timeout=600)
                     self.run(["apt-get", "install", "-y", "--no-install-recommends", "certbot"], timeout=600)
-                print("دریافت/بررسی گواهی رایگان Let's Encrypt؛ DNS باید به همین سرور برسد…", flush=True)
+                print("Obtaining/checking a free Let's Encrypt certificate; DNS must reach this server...", flush=True)
                 self.run(
                     [
                         "certbot",
@@ -562,28 +616,32 @@ class Setup:
                     timeout=300,
                 )
                 self.run(["systemctl", "enable", "--now", "certbot.timer"])
-                self.journal.write(site, vhost(self.domain, webroot, snippet, cert_name))
+                self.journal.write(site, vhost(self.domain, webroot, snippet, cert_name, self.https_port))
+            if existing:
+                self.allow_firewall((self.https_port,))
             self.reload()
-            self.probe("https://" + self.domain + probe_path, proof, attempts=3)
+            self.probe(self.origin + probe_path, proof, attempts=3)
             if self.env.read_text() != self.content:
-                raise SetupError("فایل .env هم‌زمان تغییر کرده؛ تغییر شخص دیگری بازنویسی نشد.")
+                raise SetupError(".env changed concurrently; another administrator's changes were not overwritten.")
             self.journal.write(
-                self.env, update_env(self.content, self.domain, self.port), mode=stat.S_IMODE(self.env.stat().st_mode)
+                self.env,
+                update_env(self.content, self.domain, self.port, self.https_port),
+                mode=stat.S_IMODE(self.env.stat().st_mode),
             )
             print(
-                f"اعمال تنظیمات نصب {self.mode}؛ فقط ربات بازراه‌اندازی می‌شود، بدون pull، تغییر سورس یا حذف داده‌ها…",
+                f"Applying settings for {self.mode}; restarting only the bot, without image pulls, source upgrades or data deletion...",
                 flush=True,
             )
             self.recreate_bot()
             self.probe(f"http://127.0.0.1:{self.host_port}/admin/assets/app.js", "Telegram", attempts=30)
-            self.probe("https://" + self.domain + "/admin", "/admin/assets/app.js", attempts=3)
+            self.probe(self.origin + "/admin", "/admin/assets/app.js", attempts=3)
             # Remove the temporary proof endpoint after verification.
             clean = route_config(self.host_port, probe_path, proof)
             clean = "\n".join(line for line in clean.splitlines() if probe_path not in line) + "\n"
             self.journal.write(snippet, clean)
             self.reload()
         except BaseException:
-            print("راه‌اندازی کامل نشد؛ بازگردانی فایل‌های تنظیمات…", flush=True)
+            print("Setup did not complete; restoring configuration files...", flush=True)
             conflicts = self.journal.restore()
             try:
                 if self.new_nginx:
@@ -597,44 +655,61 @@ class Setup:
                         self.recreate_bot()
                 if conflicts:
                     print(
-                        "تعارض یا خطا در بازگردانی فایل؛ فایل تازه شخص دیگر حفظ شد. بررسی دستی لازم است.",
+                        "File restore conflict or error; concurrent edits were preserved. Manual review is required.",
                         file=sys.stderr,
                     )
             except Exception:
-                print("بازگردانی سرویس کامل نشد؛ وضعیت ربات/Nginx و بکاپ خصوصی را بررسی کنید.", file=sys.stderr)
-            print(f"بکاپ و گزارش خصوصی: {self.journal.directory}", file=sys.stderr)
-            print("بسته‌های نصب‌شده، گواهی و مجوزهای افزوده UFW حذف نمی‌شوند. دیتابیس restore نشده است.", file=sys.stderr)
+                print(
+                    "Service rollback did not complete; check the bot/Nginx status and private backup.", file=sys.stderr
+                )
+            print(f"Private backup and log: {self.journal.directory}", file=sys.stderr)
+            print(
+                "Installed packages, certificates and added UFW rules are not removed. No database restore was performed.",
+                file=sys.stderr,
+            )
             raise
-        print(f"\nآماده: https://{self.domain}/admin\nدر گفتگوی خصوصی ربات با حساب مالک /adminapp را بفرستید.")
-        print("داده‌های ربات حذف نشدند. API/دیتابیس را مستقیم روی اینترنت عمومی نکنید.")
-        print(f"بکاپ تنظیمات و گزارش خصوصی: {self.journal.directory}")
+        print(f"\nReady: {self.origin}/admin\nSend /adminapp in a private chat with the bot using the owner account.")
+        print("Bot data was not deleted. Do not expose the API/database directly to the public Internet.")
+        print(f"Configuration backup and private log: {self.journal.directory}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="راه‌اندازی خودکار Mini App برای Docker/Native روی Debian/Ubuntu")
-    parser.add_argument("domain", nargs="?", help="مثال: admin.example.com")
+    parser = argparse.ArgumentParser(description="Automatic Mini App setup for Docker/Native on Debian/Ubuntu")
+    parser.add_argument("domain", nargs="?", help="Example: admin.example.com")
+    parser.add_argument(
+        "--https-port", metavar="PORT", help="Public HTTPS port (default: 443; separate from the bot API port)"
+    )
     args = parser.parse_args()
     if os.geteuid() != 0:
-        parser.error("با sudo اجرا کنید.")
-    print("DNS باید به این سرور وصل باشد و پورت‌های 80/443 از اینترنت در دسترس باشند.")
-    print("HTTPS موجود Nginx حفظ می‌شود؛ در صورت نیاز گواهی Let's Encrypt بدون ایمیل و با پذیرش شرایط آن گرفته می‌شود.")
+        parser.error("Run with sudo.")
     print(
-        "ربات کوتاه‌مدت بازراه‌اندازی می‌شود؛ پیش از راه‌اندازی بکاپ داشته باشید. ابزار DNS یا پنل‌های دیگر را تغییر نمی‌دهد."
+        "DNS must point to this server. Allow the chosen HTTPS port publicly; new certificates require inbound port 80 for HTTP-01 issuance and renewal."
     )
+    print(
+        "Compatible existing Nginx HTTPS is preserved; when needed, Let's Encrypt terms are accepted and a certificate is requested without email."
+    )
+    print("The bot will restart briefly; take a backup first. This tool does not change DNS or other control panels.")
     try:
-        domain = domain_name(args.domain or input("دامنه مینی‌اپ: "))
+        domain = domain_name(args.domain or input("Mini App domain: "))
+        # Interactive users choose a port; scripted domain-only calls keep the old default.
+        value = args.https_port
+        if value is None:
+            value = input("HTTPS port [443]: ") if sys.stdin.isatty() else "443"
+            value = value.strip() or "443"
+        https_port = public_port(value)
+        print(f"Mini App URL: {https_origin(domain, https_port)}/admin", flush=True)
         ROOT.mkdir(mode=0o755, parents=True, exist_ok=True)
         with (ROOT / ".miniapp-setup.lock").open("a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise SetupError("راه‌اندازی دیگری در حال اجراست.") from exc
-            Setup(domain).execute()
-    except (SetupError, OSError, ValueError, subprocess.SubprocessError) as exc:
-        print(f"خطا: {exc}", file=sys.stderr)
+                raise SetupError("Another setup is already running.") from exc
+            Setup(domain, https_port=https_port).execute()
+    except (SetupError, OSError, ValueError, EOFError, subprocess.SubprocessError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("لغو شد.", file=sys.stderr)
+        print("Cancelled.", file=sys.stderr)
         return 130
     return 0
 
