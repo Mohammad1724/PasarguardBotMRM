@@ -5,6 +5,7 @@ from sqlalchemy.future import select
 from app.db.base import AsyncSessionLocal as Session
 from app.db.models.plans import Plan
 from app.logger import get_logger
+from app.services.auto_renew.plans import invalidate_renewals_for_plan
 from app.utils.formatting.conversions import as_int
 
 log = get_logger(__name__)
@@ -43,11 +44,13 @@ class PlanManager:
         except SQLAlchemyError as e:
             return f"خطا در افزودن پنل: {e}"
 
-    async def get_all_plans(self, panel_code=None, duration=None):
+    async def get_all_plans(self, panel_code=None, duration=None, *, enabled_only=True):
 
         try:
             async with Session() as session:
                 stmt = select(Plan)
+                if enabled_only:
+                    stmt = stmt.where(Plan.enabled.is_(True))
                 if panel_code:
                     coerced_panel_code = as_int(panel_code)
                     if coerced_panel_code is None:
@@ -71,7 +74,11 @@ class PlanManager:
             return []
         try:
             async with Session() as session:
-                stmt = select(Plan.duration).where(Plan.panel_code == coerced_panel_code).distinct()
+                stmt = (
+                    select(Plan.duration)
+                    .where(Plan.panel_code == coerced_panel_code, Plan.enabled.is_(True))
+                    .distinct()
+                )
                 result = await session.execute(stmt)
                 return sorted([row[0] for row in result.all()])
         except SQLAlchemyError as e:
@@ -85,9 +92,18 @@ class PlanManager:
             return
         try:
             async with Session() as session:
-                result = await session.execute(select(Plan).filter_by(id=plan_id))
+                result = await session.execute(select(Plan).filter_by(id=plan_id).with_for_update())
                 plan = result.scalars().first()
                 if plan:
+                    changed = any(
+                        v is not None and v != getattr(plan, k)
+                        for k, v in {
+                            "price": new_price,
+                            "storage": new_storage,
+                            "duration": new_duration,
+                            "ip_limit": new_ip_limit,
+                        }.items()
+                    )
                     if new_price is not None:
                         plan.price = new_price
                     if new_storage is not None:
@@ -96,6 +112,8 @@ class PlanManager:
                         plan.duration = new_duration
                     if new_ip_limit is not None:
                         plan.ip_limit = new_ip_limit
+                    if changed:
+                        await invalidate_renewals_for_plan(session, plan_id)
                     await session.commit()
                     log.debug("Plan updated plan_id=%s", plan_id)
                 else:
@@ -120,7 +138,7 @@ class PlanManager:
             return False
         try:
             async with Session() as session:
-                result = await session.execute(select(Plan).filter_by(id=plan_id))
+                result = await session.execute(select(Plan).filter_by(id=plan_id).with_for_update())
                 plan = result.scalars().first()
                 if not plan:
                     return False
@@ -144,7 +162,7 @@ class PlanManager:
             return False
         try:
             async with Session() as session:
-                result = await session.execute(select(Plan).filter_by(id=plan_id))
+                result = await session.execute(select(Plan).filter_by(id=plan_id).with_for_update())
                 plan = result.scalars().first()
                 if not plan:
                     return False
@@ -176,7 +194,7 @@ class PlanManager:
                         errors.append("ID پلن مشخص نشده است")
                         continue
 
-                    result = await session.execute(select(Plan).filter_by(id=plan_id))
+                    result = await session.execute(select(Plan).filter_by(id=plan_id).with_for_update())
                     plan = result.scalars().first()
 
                     if not plan:
@@ -218,6 +236,7 @@ class PlanManager:
                             new_values["ip_limit"] = new_ip_limit
 
                     if has_changes:
+                        await invalidate_renewals_for_plan(session, plan_id)
                         updated_count += 1
                         changed_plans.append(
                             {
@@ -244,9 +263,10 @@ class PlanManager:
             return
         try:
             async with Session() as session:
-                result = await session.execute(select(Plan).filter_by(id=plan_id))
+                result = await session.execute(select(Plan).filter_by(id=plan_id).with_for_update())
                 plan = result.scalars().first()
                 if plan:
+                    await invalidate_renewals_for_plan(session, plan_id)
                     await session.delete(plan)
                     await session.commit()
                     log.debug("Plan deleted plan_id=%s", plan_id)
@@ -255,19 +275,22 @@ class PlanManager:
         except SQLAlchemyError as e:
             log.error("Plan delete failed: %s", e)
 
-    async def get_plan(self, plan_id):
+    async def get_plan(self, plan_id, *, enabled_only=True):
         plan_id = as_int(plan_id)
         if plan_id is None:
             return None
         try:
             async with Session() as session:
-                result = await session.execute(select(Plan).filter_by(id=plan_id))
+                stmt = select(Plan).filter_by(id=plan_id)
+                if enabled_only:
+                    stmt = stmt.where(Plan.enabled.is_(True))
+                result = await session.execute(stmt)
                 return result.scalars().first()
         except SQLAlchemyError as e:
             log.error("Failed to get plan: %s", e)
             return None
 
-    async def get_plan_by_volume_for_display(self, gb, panel_code):
+    async def get_plan_by_volume_for_display(self, gb, panel_code, *, enabled_only=False):
 
         panel_code = as_int(panel_code)
         if panel_code is None:
@@ -279,6 +302,7 @@ class PlanManager:
                 result = await session.execute(
                     select(Plan).filter(
                         and_(
+                            Plan.enabled.is_(True) if enabled_only else True,
                             Plan.storage >= gb - tolerance,
                             Plan.storage <= gb + tolerance,
                             Plan.panel_code == panel_code,
@@ -294,6 +318,7 @@ class PlanManager:
                 result = await session.execute(
                     select(Plan).filter(
                         and_(
+                            Plan.enabled.is_(True) if enabled_only else True,
                             Plan.storage >= gb - tolerance,
                             Plan.storage <= gb + tolerance,
                             Plan.panel_code == panel_code,
@@ -309,6 +334,7 @@ class PlanManager:
                 result = await session.execute(
                     select(Plan).filter(
                         and_(
+                            Plan.enabled.is_(True) if enabled_only else True,
                             Plan.storage >= gb - tolerance,
                             Plan.storage <= gb + tolerance,
                             Plan.panel_code == panel_code,

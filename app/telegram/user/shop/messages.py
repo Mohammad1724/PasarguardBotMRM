@@ -128,7 +128,13 @@ async def buy_discount_code_handler(event: Message):
     if plan_id:
         plan = await PlanManager().get_plan(plan_id)
     else:
-        plan = await PlanManager().get_plan_by_volume_for_display(gb=float(gig), panel_code=panel_code)
+        plan = await PlanManager().get_plan_by_volume_for_display(
+            gb=float(gig), enabled_only=True, panel_code=panel_code
+        )
+    if not plan:
+        await set_step(event.sender_id, "home")
+        await event.respond("پلن غیرفعال یا حذف شده است؛ دوباره یک پلن انتخاب کنید.")
+        return
     new_amount = int(plan.price - (plan.price * (res.discount_percentage / 100)))
 
     try:

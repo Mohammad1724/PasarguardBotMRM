@@ -28,6 +28,8 @@ class InsufficientBalance(ValueError):
 
 
 def snapshot(plan):
+    if plan is not None and getattr(plan, "enabled", True) is False:
+        raise ValueError("پلن غیرفعال است؛ پلن دیگری انتخاب کنید.")
     if (
         not plan
         or plan.plan_type != "volume"

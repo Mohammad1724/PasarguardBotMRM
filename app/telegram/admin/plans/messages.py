@@ -262,7 +262,7 @@ async def message_handler_plans(event: Message):
             )
 
             # Get the plan ID by finding the last added plan with these specifications
-            plans = await PlanManager().get_all_plans(panel_code=int(panel_code))
+            plans = await PlanManager().get_all_plans(panel_code=int(panel_code), enabled_only=False)
             plan_id = None
             if plans:
                 # Find the plan that matches our criteria (most recent one)
@@ -500,7 +500,7 @@ async def message_handler_plans(event: Message):
         if not plan_id:
             await event.respond("❌ پلن نامعتبر است.")
             return
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         panel = await PanelsManager().get_panel_by_code(plan.panel_code) if plan else None
         if msg.strip().lower() == "/skip":
             await PlanManager().update_plan_display(plan_id, display_button_text=None, set_display_button_text=True)
@@ -510,7 +510,7 @@ async def message_handler_plans(event: Message):
                 plan_id, display_button_text=msg.strip(), set_display_button_text=True
             )
             success = "✅ متن دکمه ذخیره شد." if saved else "❌ خطا در ذخیره."
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         prev_msg_id = await get_data(user_id, "edit_plan_display_msg_id")
         config_buttons = create_plan_display_config_submenu(plan_id, current_page)
         if prev_msg_id:
@@ -551,7 +551,7 @@ async def message_handler_plans(event: Message):
         await delete_data(user_id, "plan_btn_plan_id")
         await delete_data(user_id, "plan_btn_page")
         await set_step(user_id, "panel")
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         panel = await PanelsManager().get_panel_by_code(plan.panel_code) if plan else None
         await event.respond(
             ("✅ آیکون ذخیره شد." if saved else "❌ خطا در ذخیره.") + f"\n\n{plan_display_config_text(plan, panel)}",

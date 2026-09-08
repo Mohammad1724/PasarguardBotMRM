@@ -228,7 +228,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         parts = data.split(":")
         panel_code = parts[1]
         current_page = int(parts[2])
-        plans = await PlanManager().get_all_plans(panel_code=panel_code)
+        plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
         plans = sorted(plans, key=lambda p: p.storage)
         total_plans = len(plans)
         PANEL_LIMIT = 10
@@ -257,7 +257,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         parts = data.split(":")
         plan_id = int(parts[1])
         current_page = int(parts[2]) if len(parts) > 2 else 1
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         if not plan:
             await event.answer("پلن یافت نشد!", alert=True)
             return
@@ -272,7 +272,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         parts = data.split(":")
         plan_id = int(parts[1])
         current_page = int(parts[2]) if len(parts) > 2 else 1
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         if not plan:
             await event.answer("پلن یافت نشد!", alert=True)
             return
@@ -297,7 +297,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         plan_id = int(parts[1])
         current_page = int(parts[2])
         style_val = parts[3]
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         if not plan:
             await event.answer("پلن یافت نشد!", alert=True)
             return
@@ -310,7 +310,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         else:
             await PlanManager().update_plan_display(plan_id, button_style=style_val, set_button_style=True)
             await event.answer(f"رنگ تغییر کرد به {STYLE_LABELS.get(style_val, style_val)}.")
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         await event.edit(
             plan_display_config_text(plan, panel),
             buttons=create_plan_display_config_submenu(plan_id, current_page),
@@ -332,14 +332,14 @@ async def inline_callback(event: events.CallbackQuery.Event):
         parts = data.split(":")
         plan_id = int(parts[1])
         current_page = int(parts[2]) if len(parts) > 2 else 1
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         if not plan:
             await event.answer("پلن یافت نشد!", alert=True)
             return
         panel = await PanelsManager().get_panel_by_code(plan.panel_code)
         await PlanManager().update_plan_display(plan_id, clear_button_icon=True)
         await event.answer("آیکون دکمه حذف شد.")
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         await event.edit(
             plan_display_config_text(plan, panel),
             buttons=create_plan_display_config_submenu(plan_id, current_page),
@@ -354,7 +354,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         else:
             await event.answer("خطا در ریست.", alert=True)
             return
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         panel = await PanelsManager().get_panel_by_code(plan.panel_code)
         await event.edit(
             plan_display_config_text(plan, panel),
@@ -447,7 +447,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
         plan_id = int(data.split(":")[1])
 
         # Get plan info before deleting to know panel_code
-        plan = await PlanManager().get_plan(plan_id)
+        plan = await PlanManager().get_plan(plan_id, enabled_only=False)
         plan_panel_code = plan.panel_code if plan else None
         plan_duration = plan.duration if plan else None
 
@@ -467,7 +467,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
             current_page = int(current_page)
 
             # Check if there are still plans left
-            plans = await PlanManager().get_all_plans(panel_code=panel_code)
+            plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
             if plans:
                 # Recalculate page number in case current page is now empty
                 plans = sorted(plans, key=lambda p: p.storage)
@@ -597,7 +597,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
 
     elif data.startswith("UpdateAllPlans_"):
         panel_code = int(data.split("_")[1])
-        plans = await PlanManager().get_all_plans(panel_code=panel_code)
+        plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
         # Sort by time (duration) first, then by storage
         plans = sorted(plans, key=lambda p: (p.duration, p.storage))
 
@@ -633,7 +633,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
 
     elif data.startswith("GetPlansPriceList_"):
         panel_code = int(data.split("_")[1])
-        plans = await PlanManager().get_all_plans(panel_code=panel_code)
+        plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
 
         if not plans:
             await event.answer("هیچ پلنی موجود نیست!", alert=True)
@@ -649,7 +649,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
 
     elif data.startswith("SortPlansByPrice_"):
         panel_code = int(data.split("_")[1])
-        plans = await PlanManager().get_all_plans(panel_code=panel_code)
+        plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
         plans = sorted(plans, key=lambda p: p.price)
 
         message = "📊 **لیست قیمت‌ها (مرتب شده بر اساس قیمت)**\n\n"
@@ -664,7 +664,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
 
     elif data.startswith("SortPlansByTime_"):
         panel_code = int(data.split("_")[1])
-        plans = await PlanManager().get_all_plans(panel_code=panel_code)
+        plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
         plans = sorted(plans, key=lambda p: p.duration)
 
         message = "📊 **لیست قیمت‌ها (مرتب شده بر اساس زمان)**\n\n"
@@ -679,7 +679,7 @@ async def inline_callback(event: events.CallbackQuery.Event):
 
     elif data.startswith("SortPlansByVolume_"):
         panel_code = int(data.split("_")[1])
-        plans = await PlanManager().get_all_plans(panel_code=panel_code)
+        plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
         plans = sorted(plans, key=lambda p: p.storage)
 
         message = "📊 **لیست قیمت‌ها (مرتب شده بر اساس حجم)**\n\n"

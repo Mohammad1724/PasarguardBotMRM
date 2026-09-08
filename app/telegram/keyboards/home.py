@@ -95,9 +95,8 @@ async def bhome_buttons(user_id, lang):
     if user_data and user_data.tested == 0 and setting and setting.test_mode == 1 and setting.test_panel_id != 0:
         bhome.append([styled_reply_button(menu_get_trial, menu_get_trial_style)])
 
-    shop_row = []
+    shop_row = [styled_reply_button(menu_my_services, menu_my_services_style)]
     if shop_sale:
-        shop_row.append(styled_reply_button(menu_my_services, menu_my_services_style))
         shop_row.append(styled_reply_button(menu_buy_service, menu_buy_service_style))
     if shop_row:
         bhome.append(shop_row)
@@ -134,6 +133,9 @@ async def bhome_buttons(user_id, lang):
     if user_id in ADMIN_ID:
         bhome.append([styled_reply_button(menu_admin_panel, menu_admin_panel_style)])
 
+    from app.services.admin_app.layout import arrange_home
+
+    bhome = await arrange_home(bhome)
     return ReplyKeyboardMarkup([KeyboardButtonRow(button) for button in bhome], resize=True)
 
 

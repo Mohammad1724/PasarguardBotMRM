@@ -44,6 +44,8 @@ def month_key(now):
 
 
 def plan_snapshot(plan):
+    if plan is not None and getattr(plan, "enabled", True) is False:
+        raise ValueError("پلن غیرفعال است؛ پلن دیگری انتخاب کنید.")
     try:
         data = volume_snapshot(plan)
     except ValueError, TypeError, OverflowError:

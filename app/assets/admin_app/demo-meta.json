@@ -1,0 +1,759 @@
+{
+  "actor": {
+    "id": 1,
+    "name": "مدیر پاسارگارد",
+    "owner": true,
+    "permissions": [
+      "settings.manage",
+      "payments.manage",
+      "appearance.manage",
+      "plans.manage",
+      "users.view",
+      "users.manage",
+      "services.view",
+      "services.manage",
+      "tickets.view",
+      "tickets.manage",
+      "finance.view",
+      "audit.view"
+    ]
+  },
+  "permissions": {
+    "settings.manage": "تنظیمات عمومی",
+    "payments.manage": "تنظیمات پرداخت",
+    "appearance.manage": "منو و متن‌ها",
+    "plans.manage": "مدیریت پلن‌ها",
+    "users.view": "مشاهده کاربران",
+    "users.manage": "مسدودسازی کاربران",
+    "services.view": "مشاهده سرویس‌ها",
+    "services.manage": "توقف تمدید خودکار",
+    "tickets.view": "مشاهده تیکت‌ها",
+    "tickets.manage": "پاسخ و وضعیت تیکت",
+    "finance.view": "گزارش مالی",
+    "audit.view": "تاریخچه تغییرات"
+  },
+  "sections": {
+    "core_settings": {
+      "bot_mode": true,
+      "sale_mode": false,
+      "single_panel_buy_mode": false,
+      "channel_lock": false,
+      "backup_interval_hours": 24,
+      "cx_tickets_enabled": false,
+      "cx_onboarding_enabled": false,
+      "cx_conversion_enabled": false,
+      "cx_followup_enabled": false,
+      "auto_renew_enabled": false,
+      "profile_mode": true,
+      "help_mode": true,
+      "support_mode": true,
+      "advanced_settings_mode": true,
+      "gift_mode": false
+    },
+    "payment_settings": {
+      "pay_mode": false,
+      "pay_phone_verify": true,
+      "arz_mode": false,
+      "manual_card_visibility": null,
+      "manual_auto_confirm": false,
+      "manual_card_random_mode": false,
+      "manual_deposit_min": 50000,
+      "manual_deposit_max": 2000000,
+      "crypto_deposit_min": 50000,
+      "crypto_deposit_max": 10000000,
+      "manual_bonus_enabled": false,
+      "manual_bonus_percent": 0,
+      "crypto_bonus_enabled": false,
+      "crypto_bonus_percent": 0,
+      "arz_usd": 0,
+      "arz_trx": 0,
+      "arz_ton": 0,
+      "zarinpal_mode": false,
+      "zarinpal_sandbox": false,
+      "zarinpal_deposit_min": 20000,
+      "zarinpal_deposit_max": 50000000,
+      "stars_mode": false,
+      "stars_rate": 1500,
+      "stars_deposit_min": 50000,
+      "stars_deposit_max": 2000000,
+      "referral_enabled": false,
+      "referral_percent": 0,
+      "referral_first_bonus": 0,
+      "referral_min_deposit": 0
+    },
+    "purchase_settings": {
+      "extension_mode": false,
+      "upg_mode": false,
+      "tamdid_mode": false,
+      "test_mode": false,
+      "test_panel_id": 0,
+      "test_phone_verify": true,
+      "direct_pay_purchase_mode": false,
+      "direct_pay_renew_mode": false
+    },
+    "service_tools_settings": {
+      "qr_mode": false,
+      "sub_mode": false,
+      "other_links_mode": false,
+      "client_list_mode": false,
+      "usage_chart_mode": false,
+      "change_link_mode": false,
+      "copy_link_mode": false,
+      "transfer_config_mode": false,
+      "info_mode": false,
+      "del_service_mode": false
+    },
+    "reseller_settings": {
+      "reseller_sale_mode": false,
+      "reseller_min_wallet_balance": 100000
+    }
+  },
+  "home_keys": [
+    "bt.menu_my_services",
+    "bt.menu_get_trial",
+    "bt.menu_buy_service",
+    "bt.menu_buy_reseller",
+    "bt.menu_my_resellers",
+    "bt.menu_profile",
+    "bt.menu_add_balance",
+    "bt.menu_gift",
+    "bt.menu_support",
+    "bt.menu_uptime",
+    "bt.menu_help",
+    "bt.menu_advanced_settings"
+  ],
+  "texts": {
+    "start_message": {
+      "key": "start_message",
+      "title": "پیام استارت",
+      "placeholders": {}
+    },
+    "my_services_intro": {
+      "key": "my_services_intro",
+      "title": "متن معرفی سرویس‌های من",
+      "placeholders": {}
+    },
+    "no_services_message": {
+      "key": "no_services_message",
+      "title": "پیام عدم وجود سرویس",
+      "placeholders": {}
+    },
+    "no_services_message_button": {
+      "key": "no_services_message_button",
+      "title": "دکمه خرید سرویس",
+      "placeholders": {}
+    },
+    "service_info_message": {
+      "key": "service_info_message",
+      "title": "متن اطلاعات سرویس",
+      "placeholders": {
+        "status": "وضعیت سرویس",
+        "ip_limit": "محدودیت کاربر و دستگاه",
+        "plan_name": "نام پلان",
+        "service_code": "کد سرویس",
+        "config_name": "اسم کانفیگ",
+        "used_volume": "حجم مصرفی",
+        "lifetime_used_traffic": "حجم کل مصرفی (بدون ریست)",
+        "usage_progress": "نوار درصد مصرف حجم",
+        "remaining_volume": "حجم باقی مانده",
+        "total_volume": "حجم سرویس",
+        "reset_info": "اطلاعات ریست (اختیاری)",
+        "expiry_date": "تاریخ انقضا",
+        "last_connection": "آخرین اتصال (اختیاری)",
+        "edit_at": "آخرین ویرایش کانفیگ (اختیاری)",
+        "subscription_url": "لینک سابسکریپشن",
+        "tunnel_subscription_url": "لینک تانل شده ساب (اختیاری)"
+      }
+    },
+    "buy_service_intro": {
+      "key": "buy_service_intro",
+      "title": "متن معرفی خرید سرویس",
+      "placeholders": {}
+    },
+    "buy_select_panel_volume_message": {
+      "key": "buy_select_panel_volume_message",
+      "title": "متن انتخاب حجم پنل",
+      "placeholders": { "panel_name": "نام پنل" }
+    },
+    "buy_select_duration_message": {
+      "key": "buy_select_duration_message",
+      "title": "متن انتخاب مدت زمان",
+      "placeholders": {}
+    },
+    "enter_username_message": {
+      "key": "enter_username_message",
+      "title": "متن وارد کردن نام کاربری",
+      "placeholders": {}
+    },
+    "buy_username_conflict_message": {
+      "key": "buy_username_conflict_message",
+      "title": "پیام نام تکراری کانفیگ",
+      "placeholders": { "username": "نام کانفیگ تکراری" }
+    },
+    "buy_username_conflict_alert": {
+      "key": "buy_username_conflict_alert",
+      "title": "نوتیف نام تکراری کانفیگ",
+      "placeholders": { "username": "نام کانفیگ تکراری" }
+    },
+    "config_purchase_confirm": {
+      "key": "config_purchase_confirm",
+      "title": "پیام تأیید خرید کانفیگ",
+      "placeholders": {
+        "volume": "حجم سرویس",
+        "duration": "مدت زمان",
+        "config_name": "نام کانفیگ",
+        "config_type": "نوع کانفیگ",
+        "locations": "لوکیشن های موجود",
+        "user_limit": "محدودیت کاربر",
+        "price": "قیمت نهایی"
+      }
+    },
+    "config_purchase_success_message": {
+      "key": "config_purchase_success_message",
+      "title": "پیام موفقیت خرید کانفیگ",
+      "placeholders": {
+        "creation_time": "زمان ساخت",
+        "service_code": "کد سرویس",
+        "account_name": "اسم کانفیگ",
+        "volume": "حجم انتخابی",
+        "duration": "مدت زمان",
+        "user_limit": "محدودیت کاربر",
+        "subscription_url": "لینک سابسکریپشن",
+        "config_links": "لینک‌های تکی انتخاب‌شده",
+        "config_links_with_txt": "بخش آماده لینک‌های تکی با عنوان",
+        "amount_deducted": "مبلغ کسر شده",
+        "new_balance": "موجودی جدید"
+      }
+    },
+    "test_config_delivery_message": {
+      "key": "test_config_delivery_message",
+      "title": "پیام تحویل کانفیگ تست",
+      "placeholders": {
+        "creation_time": "زمان ساخت",
+        "service_code": "کد سرویس",
+        "account_name": "اسم کانفیگ",
+        "test_volume": "حجم تست",
+        "test_duration": "مدت زمان تست",
+        "subscription_url": "لینک سابسکریپشن",
+        "config_links": "لینک‌های تکی انتخاب‌شده",
+        "config_links_with_txt": "بخش آماده لینک‌های تکی با عنوان"
+      }
+    },
+    "config_purchase_discount_confirm": {
+      "key": "config_purchase_discount_confirm",
+      "title": "پیام تأیید خرید با کد تخفیف",
+      "placeholders": {
+        "volume": "حجم سرویس",
+        "duration": "مدت زمان",
+        "config_type": "نوع کانفیگ",
+        "locations": "لوکیشن های موجود",
+        "user_limit": "محدودیت کاربر",
+        "original_price": "مبلغ قبل از تخفیف",
+        "new_price": "مبلغ جدید"
+      }
+    },
+    "reseller_my_list_intro": {
+      "key": "reseller_my_list_intro",
+      "title": "متن لیست نمایندگی‌های من",
+      "placeholders": { "count": "تعداد" }
+    },
+    "reseller_my_list_empty": {
+      "key": "reseller_my_list_empty",
+      "title": "پیام نبودن نمایندگی",
+      "placeholders": {}
+    },
+    "reseller_buy_panel_picker": {
+      "key": "reseller_buy_panel_picker",
+      "title": "متن انتخاب پنل (خرید)",
+      "placeholders": {}
+    },
+    "reseller_select_plan_prompt": {
+      "key": "reseller_select_plan_prompt",
+      "title": "متن انتخاب پلن",
+      "placeholders": { "panel_name": "نام پنل" }
+    },
+    "add_balance_intro": {
+      "key": "add_balance_intro",
+      "title": "متن معرفی افزایش موجودی",
+      "placeholders": {}
+    },
+    "insufficient_balance_message": {
+      "key": "insufficient_balance_message",
+      "title": "پیام کمبود موجودی (حالت عادی)",
+      "placeholders": {
+        "required": "مبلغ لازم",
+        "shortfall": "کمبود موجودی",
+        "product_label": "نام محصول",
+        "volume": "حجم",
+        "balance": "موجودی فعلی"
+      }
+    },
+    "insufficient_balance_direct_pay": {
+      "key": "insufficient_balance_direct_pay",
+      "title": "پیام کمبود موجودی (پرداخت مستقیم)",
+      "placeholders": {
+        "required": "مبلغ لازم",
+        "shortfall": "کمبود موجودی",
+        "product_label": "نام محصول",
+        "volume": "حجم",
+        "balance": "موجودی فعلی"
+      }
+    },
+    "insufficient_balance_direct_pay_renew": {
+      "key": "insufficient_balance_direct_pay_renew",
+      "title": "پیام کمبود موجودی (پرداخت مستقیم تمدید)",
+      "placeholders": {
+        "required": "مبلغ لازم",
+        "shortfall": "کمبود موجودی",
+        "product_label": "نام محصول",
+        "volume": "حجم",
+        "balance": "موجودی فعلی"
+      }
+    },
+    "direct_pay_topup_intro": {
+      "key": "direct_pay_topup_intro",
+      "title": "معرفی پرداخت مستقیم پس از کلیک افزایش موجودی",
+      "placeholders": {
+        "product_label": "نام محصول",
+        "volume": "حجم",
+        "topup_amount": "مبلغ شارژ",
+        "required": "مبلغ کل خرید",
+        "shortfall": "کمبود موجودی"
+      }
+    },
+    "direct_pay_renew_topup_intro": {
+      "key": "direct_pay_renew_topup_intro",
+      "title": "معرفی پرداخت مستقیم تمدید پس از کلیک افزایش موجودی",
+      "placeholders": {
+        "product_label": "نام محصول",
+        "volume": "حجم",
+        "topup_amount": "مبلغ شارژ",
+        "required": "مبلغ کل تمدید",
+        "shortfall": "کمبود موجودی"
+      }
+    },
+    "direct_pay_fulfill_failed": {
+      "key": "direct_pay_fulfill_failed",
+      "title": "خطای ساخت خودکار پس از شارژ",
+      "placeholders": { "balance": "موجودی فعلی" }
+    },
+    "direct_pay_renew_fulfill_failed": {
+      "key": "direct_pay_renew_fulfill_failed",
+      "title": "خطای تمدید خودکار پس از شارژ",
+      "placeholders": { "balance": "موجودی فعلی" }
+    },
+    "direct_pay_cancelled": {
+      "key": "direct_pay_cancelled",
+      "title": "لغو سفارش پرداخت مستقیم",
+      "placeholders": {}
+    },
+    "manual_card_info": {
+      "key": "manual_card_info",
+      "title": "متن اطلاعات واریز (بعد از ثبت مبلغ)",
+      "placeholders": {
+        "min_amount": "حداقل شارژ (تومان)",
+        "max_amount": "حداکثر شارژ (تومان)",
+        "amount": "مبلغ تومان",
+        "amount_toman": "مبلغ تومان",
+        "amount_rial": "مبلغ ریال",
+        "card_line": "شماره کارت (اختیاری / قدیمی)"
+      }
+    },
+    "manual_card_amount_request": {
+      "key": "manual_card_amount_request",
+      "title": "متن درخواست مبلغ",
+      "placeholders": {
+        "min_amount": "حداقل شارژ (تومان)",
+        "max_amount": "حداکثر شارژ (تومان)"
+      }
+    },
+    "manual_card_receipt_request": {
+      "key": "manual_card_receipt_request",
+      "title": "متن درخواست رسید",
+      "placeholders": {
+        "amount": "مبلغ تومان",
+        "amount_toman": "مبلغ تومان",
+        "amount_rial": "مبلغ ریال"
+      }
+    },
+    "manual_card_receipt_confirmed": {
+      "key": "manual_card_receipt_confirmed",
+      "title": "متن تایید رسید",
+      "placeholders": { "amount": "مبلغ" }
+    },
+    "manual_card_amount_range_error": {
+      "key": "manual_card_amount_range_error",
+      "title": "خطای بازه مبلغ",
+      "placeholders": {
+        "min_amount": "حداقل شارژ (تومان)",
+        "max_amount": "حداکثر شارژ (تومان)"
+      }
+    },
+    "manual_card_numeric_error": {
+      "key": "manual_card_numeric_error",
+      "title": "خطای ورودی غیرعددی",
+      "placeholders": {}
+    },
+    "crypto_amount_range_error": {
+      "key": "crypto_amount_range_error",
+      "title": "خطای بازه مبلغ",
+      "placeholders": {
+        "min_amount": "حداقل شارژ (تومان)",
+        "max_amount": "حداکثر شارژ (تومان)"
+      }
+    },
+    "crypto_numeric_error": {
+      "key": "crypto_numeric_error",
+      "title": "خطای ورودی غیرعددی",
+      "placeholders": {}
+    },
+    "webhook_notification_data_exhausted": {
+      "key": "webhook_notification_data_exhausted",
+      "title": "اطلاع‌رسانی اتمام حجم",
+      "placeholders": {}
+    },
+    "renewal_step_one_text": {
+      "key": "renewal_step_one_text",
+      "title": "متن مرحله اول تمدید",
+      "placeholders": {}
+    },
+    "renewal_step_two_text": {
+      "key": "renewal_step_two_text",
+      "title": "متن مرحله دوم تمدید",
+      "placeholders": { "panel_name": "نام پنل" }
+    },
+    "renewal_final_step_text": {
+      "key": "renewal_final_step_text",
+      "title": "متن مرحله نهایی تمدید",
+      "placeholders": {}
+    },
+    "renewal_success_text": {
+      "key": "renewal_success_text",
+      "title": "متن موفقیت تمدید",
+      "placeholders": {}
+    },
+    "help_message": {
+      "key": "help_message",
+      "title": "متن راهنما",
+      "placeholders": {}
+    },
+    "support_message": {
+      "key": "support_message",
+      "title": "متن پشتیبانی",
+      "placeholders": {}
+    },
+    "advanced_settings_intro": {
+      "key": "advanced_settings_intro",
+      "title": "متن تنظیمات پیشرفته",
+      "placeholders": {}
+    }
+  },
+  "buttons": [
+    {
+      "key": "bt.menu_my_services",
+      "title": "سرویس های من",
+      "default": "🔑 سرویس های من"
+    },
+    {
+      "key": "bt.menu_get_trial",
+      "title": "دریافت تست",
+      "default": "🎁 دریافت تست"
+    },
+    {
+      "key": "bt.menu_buy_service",
+      "title": "خرید سرویس",
+      "default": "🛍 خرید سرویس"
+    },
+    {
+      "key": "bt.menu_buy_reseller",
+      "title": "خرید پنل نمایندگی",
+      "default": "🏢 خرید پنل نمایندگی"
+    },
+    {
+      "key": "bt.menu_my_resellers",
+      "title": "نمایندگی‌های من",
+      "default": "📋 نمایندگی‌های من"
+    },
+    {
+      "key": "bt.menu_profile",
+      "title": "پروفایل من",
+      "default": "🙍 پروفایل من"
+    },
+    {
+      "key": "bt.menu_add_balance",
+      "title": "افزایش موجودی",
+      "default": "💰 افزایش موجودی"
+    },
+    { "key": "bt.menu_gift", "title": "کد هدیه", "default": "🎟 کد هدیه" },
+    { "key": "bt.menu_support", "title": "پشتیبانی", "default": "☎️ پشتیبانی" },
+    {
+      "key": "bt.menu_uptime",
+      "title": "وضعیت سرویس ها",
+      "default": "🔋 وضعیت سرویس ها"
+    },
+    { "key": "bt.menu_help", "title": "راهنما", "default": "📚 راهنما" },
+    {
+      "key": "bt.menu_advanced_settings",
+      "title": "تنظیمات پیشرفته",
+      "default": "⚙️ تنظیمات پیشرفته"
+    },
+    {
+      "key": "bt.menu_admin_panel",
+      "title": "پنل مدیریت",
+      "default": "⚙️ پنل مدیریت"
+    },
+    {
+      "key": "in.ms.change_sub",
+      "title": "تغییر ساب",
+      "default": "🔗 تغییر ساب"
+    },
+    {
+      "key": "in.ms.change_link",
+      "title": "تغییر لینک",
+      "default": "🔗 تغییر لینک"
+    },
+    { "key": "in.ms.copy_link", "title": "کپی لینک", "default": "🔗 کپی لینک" },
+    {
+      "key": "in.ms.info",
+      "title": "نمایش اطلاعات بیشتر",
+      "default": "⚙️ نمایش اطلاعات بیشتر"
+    },
+    {
+      "key": "in.ms.extra_volume",
+      "title": "حجم اضافه",
+      "default": "♾️ حجم اضافه"
+    },
+    {
+      "key": "in.ms.extend_time",
+      "title": "تمدید زمان",
+      "default": "📅 تمدید زمان"
+    },
+    {
+      "key": "in.ms.extend_service",
+      "title": "تمدید سرویس",
+      "default": "💎 تمدیدسرویس"
+    },
+    {
+      "key": "in.ms.qrcode",
+      "title": "دریافت Qrcode",
+      "default": "🔘 دریافت Qrcode"
+    },
+    {
+      "key": "in.ms.transfer_config",
+      "title": "واگذاری کانفیگ",
+      "default": "🔎 واگذاری کانفیگ"
+    },
+    {
+      "key": "in.ms.other_links",
+      "title": "نمایش لینک‌های دیگر",
+      "default": "➕ نمایش لینک‌های دیگر"
+    },
+    {
+      "key": "in.ms.show_clients",
+      "title": "نمایش کلاینت‌ها",
+      "default": "🖥 نمایش کلاینت‌ها"
+    },
+    {
+      "key": "in.ms.usage_chart",
+      "title": "نمودار مصرف",
+      "default": "📊 نمودار مصرف"
+    },
+    {
+      "key": "in.ms.delete_service",
+      "title": "حذف کانفیگ",
+      "default": "🗑 حذف این کانفیگ برای همیشه"
+    },
+    {
+      "key": "in.ms.back_to_services",
+      "title": "بازگشت به لیست سرویس‌ها",
+      "default": "بازگشت به لیست سرویس‌ها"
+    },
+    {
+      "key": "in.ms.renew.discount",
+      "title": "کد تخفیف (تمدید اکانت)",
+      "default": "🎁 کد تخفیف (تمدید)"
+    },
+    {
+      "key": "in.ms.renew.back",
+      "title": "بازگشت (تمدید اکانت)",
+      "default": "◀️ بازگشت"
+    },
+    {
+      "key": "in.ms.renew.confirm",
+      "title": "تأیید تمدید اکانت",
+      "default": "💎 تأیید تمدید اکانت"
+    },
+    {
+      "key": "in.ms.sub_links.prev",
+      "title": "صفحه قبلی (لینک‌ها)",
+      "default": "صفحه قبلی →"
+    },
+    {
+      "key": "in.ms.sub_links.next",
+      "title": "صفحه بعدی (لینک‌ها)",
+      "default": "← صفحه بعدی"
+    },
+    {
+      "key": "in.ms.sub_links.get_all",
+      "title": "دریافت همه لینک‌ها",
+      "default": "📥 دریافت تمام لینک‌های کانفیگ"
+    },
+    {
+      "key": "in.ms.sub_links.back",
+      "title": "بازگشت (لینک‌های دیگر)",
+      "default": "بازگشت به قبل"
+    },
+    {
+      "key": "in.balance.crypto",
+      "title": "پرداخت ارزی",
+      "default": "💵 پرداخت ارزی"
+    },
+    {
+      "key": "in.balance.manual",
+      "title": "کارت به کارت (دستی)",
+      "default": "💳 کارت به کارت (تایید زیر 5 دقیقه)"
+    },
+    {
+      "key": "in.balance.disabled",
+      "title": "شارژ غیرفعال",
+      "default": "❌ شارژ حساب غیرفعال می‌باشد"
+    },
+    {
+      "key": "in.balance.trx",
+      "title": "پرداخت TRX",
+      "default": "💵 پرداخت با TRX (ترون)"
+    },
+    {
+      "key": "in.balance.usdt",
+      "title": "پرداخت USDT",
+      "default": "💵 پرداخت با USDT (تتر)"
+    },
+    {
+      "key": "in.balance.ton",
+      "title": "پرداخت TON",
+      "default": "💎 پرداخت با TON (تون)"
+    },
+    {
+      "key": "in.balance.zarinpal",
+      "title": "پرداخت آنلاین (زرین‌پال)",
+      "default": "🏦 پرداخت آنلاین (زرین‌پال)"
+    },
+    {
+      "key": "in.balance.stars",
+      "title": "پرداخت با ستاره تلگرام",
+      "default": "⭐ پرداخت با ستاره تلگرام"
+    },
+    {
+      "key": "in.balance.crypto_back",
+      "title": "بازگشت به روش‌های پرداخت",
+      "default": "🔙 بازگشت به روش‌های پرداخت"
+    },
+    {
+      "key": "in.balance.send_receipt",
+      "title": "ارسال رسید واریزی",
+      "default": "💰 پرداخت کردم | ارسال رسید واریزی"
+    },
+    {
+      "key": "in.balance.flow_cancel",
+      "title": "انصراف (منوی شارژ)",
+      "default": "🔙 انصراف · بازگشت به منوی شارژ"
+    },
+    {
+      "key": "in.balance.back_home",
+      "title": "بازگشت به منوی اصلی",
+      "default": "🏠 بازگشت به منوی اصلی"
+    },
+    {
+      "key": "in.buy.cancel",
+      "title": "انصراف (خرید)",
+      "default": "❌ انصراف"
+    },
+    { "key": "in.buy.back", "title": "بازگشت (خرید)", "default": "🔙 بازگشت" },
+    {
+      "key": "in.buy.confirm",
+      "title": "تأیید خرید",
+      "default": "✅ تأیید خرید"
+    },
+    {
+      "key": "in.buy.discount",
+      "title": "اعمال کد تخفیف",
+      "default": "🎉 اعمال کد تخفیف"
+    },
+    {
+      "key": "in.buy.default_username",
+      "title": "اسم پیشفرض ربات",
+      "default": "🎲 اسم پیشفرض ربات"
+    },
+    {
+      "key": "in.buy.retry_username",
+      "title": "تغییر مجدد نام کانفیگ",
+      "default": "🔄 تغییر مجدد نام کانفیگ"
+    },
+    {
+      "key": "in.buy.empty_list",
+      "title": "خرید (بدون سرویس)",
+      "default": "🚀 خرید اکانت ویتوری"
+    },
+    {
+      "key": "in.rs.show_creds",
+      "title": "نمایش رمز ورود",
+      "default": "🔑 نمایش رمز ورود"
+    },
+    {
+      "key": "in.rs.change_password",
+      "title": "تغییر رمز عبور",
+      "default": "🔄 تغییر رمز عبور"
+    },
+    {
+      "key": "in.rs.resume",
+      "title": "فعال‌سازی پنل",
+      "default": "▶️ فعال‌سازی پنل"
+    },
+    {
+      "key": "in.rs.pause",
+      "title": "غیرفعال‌سازی پنل",
+      "default": "⏸ غیرفعال‌سازی پنل"
+    },
+    { "key": "in.rs.renew", "title": "تمدید نمایندگی", "default": "💎 تمدید" },
+    {
+      "key": "in.rs.usage_report",
+      "title": "گزارش مصرف",
+      "default": "📊 گزارش مصرف"
+    },
+    {
+      "key": "in.rs.usage_cap",
+      "title": "محدودیت مصرف",
+      "default": "📦 محدودیت مصرف"
+    },
+    {
+      "key": "in.rs.usage_cap_set",
+      "title": "تنظیم سقف (گیگ)",
+      "default": "✏️ تنظیم سقف (گیگ)"
+    },
+    {
+      "key": "in.rs.usage_cap_clear",
+      "title": "حذف سقف مصرف",
+      "default": "🗑 حذف سقف مصرف"
+    },
+    {
+      "key": "in.rs.delete",
+      "title": "حذف نمایندگی",
+      "default": "🗑 حذف نمایندگی"
+    },
+    {
+      "key": "in.rs.buy_random_username",
+      "title": "نام تصادفی (نمایندگی)",
+      "default": "🎲 نام تصادفی"
+    },
+    {
+      "key": "in.rs.delete_confirm",
+      "title": "تأیید حذف نمایندگی",
+      "default": "✅ بله، کامل حذف شود"
+    },
+    {
+      "key": "in.rs.chpwd_confirm",
+      "title": "تأیید تغییر رمز",
+      "default": "✅ بله، رمز عوض شود"
+    }
+  ]
+}

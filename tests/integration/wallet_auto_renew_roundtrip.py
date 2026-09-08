@@ -181,7 +181,7 @@ async def main():
             await migrate("downgrade", "c82a1d9e740b", refuse=True)
         async with engine.connect() as conn:
             assert (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar() == "d93b2e5f860c"
-        print("PASS: downgrade refuses to erase review/applying funds before any table is dropped")
+        print("PASS: downgrade refuses to erase review/applying funds before any auto-renew table is dropped")
         async with Session() as session, session.begin():
             # Synthetic fixture resolution, not a production refund procedure.
             (await session.get(Attempt, "a" * 32)).status = "refunded"

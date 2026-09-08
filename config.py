@@ -57,3 +57,6 @@ REDIS_NAMESPACE_PREFIX = config("REDIS_NAMESPACE_PREFIX", default="pasarguardbot
 STATE_TTL_SECONDS = config("STATE_TTL_SECONDS", cast=int, default=86400)
 LOCK_TTL_SECONDS = config("LOCK_TTL_SECONDS", cast=int, default=300)
 CALLBACK_TTL_SECONDS = config("CALLBACK_TTL_SECONDS", cast=int, default=3600)
+
+# Empty disables Mini App authentication/API. HTTPS origin is required in production.
+ADMIN_MINI_APP_URL = config("ADMIN_MINI_APP_URL", default="").strip().rstrip("/")

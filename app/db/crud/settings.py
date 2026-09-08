@@ -76,7 +76,7 @@ class SettingsManager:
     async def update_setting(self, setting_id, **kwargs):
         try:
             async with Session() as session:
-                result = await session.execute(select(Settings).filter_by(id=setting_id))
+                result = await session.execute(select(Settings).filter_by(id=setting_id).with_for_update())
                 setting = result.scalars().first()
                 if setting:
                     _apply_settings_updates(setting, kwargs)
@@ -90,7 +90,7 @@ class SettingsManager:
     async def delete_setting(self, setting_id):
         try:
             async with Session() as session:
-                result = await session.execute(select(Settings).filter_by(id=setting_id))
+                result = await session.execute(select(Settings).filter_by(id=setting_id).with_for_update())
                 setting = result.scalars().first()
                 if setting:
                     await session.delete(setting)
@@ -104,7 +104,7 @@ class SettingsManager:
     async def toggle_mode(self, setting_id, mode_name):
         try:
             async with Session() as session:
-                result = await session.execute(select(Settings).filter_by(id=setting_id))
+                result = await session.execute(select(Settings).filter_by(id=setting_id).with_for_update())
                 setting = result.scalars().first()
                 if setting and mode_name in SETTINGS_CONFIG_KEYS:
                     current_value = bool(getattr(setting, mode_name))
@@ -119,7 +119,7 @@ class SettingsManager:
     async def update_setting_by_name(self, setting_name, value):
         try:
             async with Session() as session:
-                result = await session.execute(select(Settings))
+                result = await session.execute(select(Settings).with_for_update())
                 setting = result.scalars().first()
                 if setting and setting_name in SETTINGS_CONFIG_KEYS:
                     _apply_settings_updates(setting, {setting_name: value})

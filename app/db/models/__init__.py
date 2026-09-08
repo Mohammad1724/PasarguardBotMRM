@@ -1,4 +1,5 @@
 from . import (
+    admin_app,
     app_files,
     auto_renew,
     bot_text,
@@ -29,6 +30,7 @@ from . import (
 )
 
 __all__ = [
+    "admin_app",
     "app_files",
     "auto_renew",
     "bot_text",

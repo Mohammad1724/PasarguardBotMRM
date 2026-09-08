@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, Float, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Column, Float, Integer, String, Text
 
 from app.db.base import Base
 
@@ -7,6 +7,7 @@ class Plan(Base):
     __tablename__ = "plans"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="1")
     price = Column(Float, nullable=False)
     storage = Column(Float, nullable=False)
     duration = Column(Integer, nullable=False)

@@ -889,3 +889,25 @@ async def test_paid_cleanup_keeps_local_record_after_unconfirmed_panel_delete(re
         await cleanup.retire_paid(100, now)
     async with Session() as session:
         assert await session.get(Service, 100) is not None
+
+
+async def test_disabled_plan_after_funding_still_recovers_exact_paid_target(renewal, monkeypatch):
+    from app.services.auto_renew.plans import invalidate_renewals_for_plan
+
+    await advance_notice(renewal)
+
+    async def lost(panel, method, **kwargs):
+        result = await renewal.call(panel, method, **kwargs)
+        if method == "modify_user_by_id":
+            raise TimeoutError()
+        return result
+
+    monkeypatch.setattr(ar, "panel_call", lost)
+    await ar.process_policy(100)
+    order = (await attempts())[0]
+    async with Session() as session, session.begin():
+        (await session.get(Plan, 11)).enabled = False
+        await invalidate_renewals_for_plan(session, 11)
+    await ar.reconcile(order.token)
+    assert (await attempts())[0].status == "applied" and await balance() == 9000
+    assert len(renewal.writes) == 1 and (await policy()).state == "paused"

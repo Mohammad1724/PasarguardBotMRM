@@ -74,7 +74,13 @@ async def service_message_handler(event: Message):
         if plan_id:
             plan = await PlanManager().get_plan(plan_id)
         else:
-            plan = await PlanManager().get_plan_by_volume_for_display(gb=float(Hajm), panel_code=panelCode)
+            plan = await PlanManager().get_plan_by_volume_for_display(
+                gb=float(Hajm), enabled_only=True, panel_code=panelCode
+            )
+        if not plan:
+            await set_step(event.sender_id, "home")
+            await event.respond("پلن غیرفعال یا حذف شده است؛ دوباره یک پلن انتخاب کنید.")
+            return
         deduction = plan.price * (res.discount_percentage / 100)
         new_amount = int(plan.price - deduction)
 

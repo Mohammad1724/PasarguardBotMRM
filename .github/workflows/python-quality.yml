@@ -72,10 +72,11 @@ jobs:
       - name: Install MariaDB backup client
         run: sudo apt-get update && sudo apt-get install -y mariadb-client
 
-      - name: Customer experience migration and real backup roundtrip
+      - name: Product migrations and real backup roundtrips
         env:
           CX_MIGRATION_TEST_URL: mysql+asyncmy://root:local-ci-only@127.0.0.1:3306/cx_migration_test
           AR_MIGRATION_TEST_URL: mysql+asyncmy://root:local-ci-only@127.0.0.1:3306/ar_migration_test
+          ADMIN_MIGRATION_TEST_URL: mysql+asyncmy://root:local-ci-only@127.0.0.1:3306/admin_migration_test
           TEST_REDIS_URL: redis://127.0.0.1:6379
         run: |
           uv run --no-sync python - <<'PY'
@@ -86,8 +87,10 @@ jobs:
               async with conn.cursor() as cursor:
                   await cursor.execute("CREATE DATABASE cx_migration_test CHARACTER SET utf8mb4")
                   await cursor.execute("CREATE DATABASE ar_migration_test CHARACTER SET utf8mb4")
+                  await cursor.execute("CREATE DATABASE admin_migration_test CHARACTER SET utf8mb4")
               conn.close()
           asyncio.run(prepare())
           PY
           uv run --no-sync python tests/integration/customer_experience_roundtrip.py
           uv run --no-sync python tests/integration/wallet_auto_renew_roundtrip.py
+          uv run --no-sync python tests/integration/admin_app_roundtrip.py

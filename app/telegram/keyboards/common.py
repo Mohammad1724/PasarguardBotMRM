@@ -215,7 +215,7 @@ async def _get_keyboard_button_config(
     clear_default_style = button is not None and button.button_style == ""
     style = None if clear_default_style else button.button_style if button and button.button_style else default_style
     if button and button.button_icon is not None:
-        icon = button.button_icon
+        icon = button.button_icon or None
     elif clear_default_style:
         icon = None
     else:

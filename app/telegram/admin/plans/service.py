@@ -37,7 +37,7 @@ async def display_plan_info(
     current_page=1,
 ):
     """English docstring for display_plan_info."""
-    plan = await PlanManager().get_plan(plan_id)
+    plan = await PlanManager().get_plan(plan_id, enabled_only=False)
     if not plan:
         if original_event:
             await original_event.answer("پلن یافت نشد!", alert=True)
@@ -121,7 +121,7 @@ async def display_plan_info(
 
 
 async def display_plans(user_id, panel_code, current_page=1, edit_message=False, original_event=None):
-    plans = await PlanManager().get_all_plans(panel_code=panel_code)
+    plans = await PlanManager().get_all_plans(panel_code=panel_code, enabled_only=False)
     plans = sorted(plans, key=lambda p: p.storage)
     PANEL_LIMIT = 20
 
