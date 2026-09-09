@@ -52,9 +52,6 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
     show_clients_text, show_clients_style = await _get_keyboard_button_config(
         keyboard_crud, "in.ms.show_clients", "🖥 نمایش کلاینت‌ها"
     )
-    usage_chart_text, usage_chart_style = await _get_keyboard_button_config(
-        keyboard_crud, "in.ms.usage_chart", "📊 نمودار مصرف"
-    )
     delete_service_text, delete_service_style = await _get_keyboard_button_config(
         keyboard_crud, "in.ms.delete_service", "🗑 حذف این کانفیگ برای همیشه"
     )
@@ -110,7 +107,6 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
                 styled_callback_button(transfer_config_text, f"TransferConfig:{services.code}", transfer_config_style),
                 styled_callback_button(other_links_text, f"othersSubLinks:{services.code}", other_links_style),
                 styled_callback_button(show_clients_text, f"showClients:{services.code}", show_clients_style),
-                styled_callback_button(usage_chart_text, f"UsageChart:{services.code}:7:0", usage_chart_style),
             ]
         )
     else:
@@ -149,10 +145,6 @@ async def create_inline_service_buttons(services, panel=None, settings=None, adm
         if settings.client_list_mode and panel_button_enabled(get_panel, "btn_clients"):
             active_buttons.append(
                 styled_callback_button(show_clients_text, f"showClients:{services.code}", show_clients_style)
-            )
-        if settings.usage_chart_mode and panel_button_enabled(get_panel, "btn_usage_chart"):
-            active_buttons.append(
-                styled_callback_button(usage_chart_text, f"UsageChart:{services.code}:7:0", usage_chart_style)
             )
 
     active_button_rows = [KeyboardButtonRow(active_buttons[i : i + 2]) for i in range(0, len(active_buttons), 2)]

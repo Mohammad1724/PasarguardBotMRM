@@ -679,10 +679,6 @@ async def service_button_rows(service, config):
     """Shared by delivery messages and service cards; every callback checks access again."""
     rows = []
     code = service.code
-    if config.cx_onboarding_enabled:
-        rows.append(KeyboardButtonRow([button("راهنمای اتصال مرحله‌ای", f"guide:{code}")]))
-    if config.cx_tickets_enabled and config.support_mode:
-        rows.append(KeyboardButtonRow([button("مشکل این سرویس", f"topics:{code}")]))
     if service.is_test is True:
         if config.cx_conversion_enabled and config.sale_mode:
             rows.append(KeyboardButtonRow([button("تبدیل تست به اشتراک اصلی", f"plans:{code}:0")]))

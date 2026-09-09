@@ -591,7 +591,8 @@ async def test_callback_payloads_fit_telegram_limit(cx):
     config = await SettingsManager().get_settings()
     _, service = await ServiceCRUD().get_service(100)
     rows = await service_button_rows(service, config)
-    assert len(rows) == 4
+    assert len(rows) == 2
+    assert {b.data for row in rows for b in row.buttons} == {b"cx:plans:100:0", b"cx:remind:100"}
     assert all(len(b.data) <= 64 for row in rows for b in row.buttons)
 
 
@@ -858,3 +859,56 @@ async def test_concurrent_different_quotes_reserve_only_one_debit(cx):
     )
     assert sum(not isinstance(result, Exception) for result in results) == 1
     assert await balance() == 9000
+
+
+@pytest.mark.parametrize("admin", [False, True])
+@pytest.mark.parametrize("is_test", [False, True])
+async def test_service_cards_omit_removed_buttons_even_when_enabled(cx, admin, is_test):
+    from app.telegram.keyboards.services import create_inline_service_buttons
+
+    config = await SettingsManager().get_settings()
+    await SettingsManager().update_setting(
+        config.id,
+        usage_chart_mode=True,
+        cx_onboarding_enabled=True,
+        cx_tickets_enabled=True,
+        support_mode=True,
+        qr_mode=True,
+        client_list_mode=True,
+    )
+    config = await SettingsManager().get_settings()
+    async with Session() as session:
+        service = await session.get(Service, 100)
+        panel = await session.get(Panels, 10)
+        service.is_test = is_test
+        markup = await create_inline_service_buttons(
+            service,
+            panel=panel,
+            settings=config,
+            admin=admin,
+            link="https://example.invalid/sub/synthetic",
+            status="disabled",
+        )
+    buttons = [button for row in markup.rows for button in row.buttons]
+    callbacks = [getattr(button, "data", b"") for button in buttons]
+    callbacks = [data.encode() if isinstance(data, str) else data for data in callbacks]
+    assert not any(data.startswith((b"UsageChart:", b"cx:guide:", b"cx:topics:")) for data in callbacks)
+    assert b"getQrcode:100" in callbacks and b"showClients:100" in callbacks
+    assert all(row.buttons for row in markup.rows)
+
+
+@pytest.mark.parametrize("is_test", [False, True])
+async def test_delivery_buttons_keep_conversion_and_reminder_only(cx, is_test):
+    from app.telegram.user.customer_experience.handlers import service_button_rows
+
+    config = SimpleNamespace(
+        cx_onboarding_enabled=True,
+        cx_tickets_enabled=True,
+        support_mode=True,
+        cx_conversion_enabled=True,
+        sale_mode=True,
+        cx_followup_enabled=True,
+    )
+    rows = await service_button_rows(SimpleNamespace(code=100, is_test=is_test), config)
+    callbacks = [button.data for row in rows for button in row.buttons]
+    assert callbacks == ([b"cx:plans:100:0", b"cx:remind:100"] if is_test else [])
