@@ -79,7 +79,17 @@ async def main():
     stop_task = asyncio.create_task(stop_event.wait())
     tasks = [bot_task] + ([api_task] if api_task else [])
     failure = None
+    from app.services.readiness import ReadinessServer
+
+    readiness = ReadinessServer(
+        lambda: (
+            not stop_event.is_set()
+            and not bot_task.done()
+            and (server is None or (server.started and api_task is not None and not api_task.done()))
+        )
+    )
     try:
+        await readiness.start()
         done, _pending = await asyncio.wait([stop_task, *tasks], return_when=asyncio.FIRST_COMPLETED)
         if not stop_event.is_set():
             for task in done:
@@ -89,6 +99,7 @@ async def main():
                     break
     finally:
         stop_event.set()
+        await readiness.close()
         if server:
             server.should_exit = True
         stop_task.cancel()

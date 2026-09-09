@@ -246,6 +246,9 @@ async def load_plugins_telethon():
 
 
 async def run_telethon(stop_event: asyncio.Event | None = None):
+    from app.services import readiness
+
+    readiness.telegram_started = False
     await SettingsManager().add_default_settings()
     await KeyboardButtonCRUD().initialize_default_buttons()
     await Kenzo.start(bot_token=BOT_TOKEN)
@@ -276,9 +279,11 @@ async def run_telethon(stop_event: asyncio.Event | None = None):
         await Kenzo.disconnect()
         logger.info("%s Bot disconnected", LogTag.TELEGRAM)
 
+    readiness.telegram_started = True
     stopper = asyncio.create_task(_stopper())
     try:
         await Kenzo.run_until_disconnected()
     finally:
+        readiness.telegram_started = False
         stopper.cancel()
         unregister_telethon_client(Kenzo)

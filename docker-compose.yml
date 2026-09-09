@@ -67,8 +67,14 @@ services:
 
   bot:
     image: ghcr.io/mohammad1724/pasarguardbotmrm:${PASARGUARDBOT_IMAGE_TAG:-latest}
-    pull_policy: always
+    pull_policy: missing
     container_name: pasarguardbot
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "/app/healthcheck.py"]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 120s
     restart: unless-stopped
     env_file:
       - ${PASARGUARDBOT_CONFIG_DIR:-.}/.env

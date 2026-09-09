@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # ── Paths & constants ──────────────────────────────────────────────────────────
-readonly SCRIPT_VERSION="1.2.19"
+readonly SCRIPT_VERSION="1.2.20"
 readonly CONFIG_DIR="/opt/pasarguardbot"
 readonly COMPOSE_FILE="${CONFIG_DIR}/docker-compose.yml"
 readonly ENV_FILE="${CONFIG_DIR}/.env"
@@ -968,40 +968,32 @@ EOF
 }
 
 init_native_mariadb_datadir() {
-    local install_db
-    local mysql_user="mysql"
-
+    local install_db entries mysql_user="mysql" datadir="${CONFIG_DIR}/data/mariadb"
     id -u "$mysql_user" &>/dev/null || die "System user '${mysql_user}' not found (install mariadb-server first)."
-
-    mkdir -p "${CONFIG_DIR}/data/mariadb" "$RUN_DIR"
+    [[ ! -L "$datadir" ]] || die "Refusing to initialize a symlink datadir. No data was removed."
+    mkdir -p "$datadir" "$RUN_DIR" || die "Cannot access MariaDB datadir. No data was removed."
+    # A missing mysql system schema is NOT permission to erase recoverable files.
+    if [[ ! -d "$datadir/mysql" ]] || [[ -L "$datadir/mysql" ]]; then
+        entries="$(find "$datadir" -mindepth 1 -maxdepth 1 -print -quit)" || die "Cannot inspect datadir safely. No data was removed."
+        if [[ -n "$entries" ]]; then
+            die "MariaDB datadir is non-empty but unrecognized: ${datadir}. No data was removed. Back it up and investigate; do not reinstall over it."
+        fi
+    fi
     chmod 755 "$CONFIG_DIR"
     chmod 1777 "$RUN_DIR" 2>/dev/null || chmod 755 "$RUN_DIR"
     configure_native_mariadb_apparmor
-
-    if [[ -d "${CONFIG_DIR}/data/mariadb/mysql" ]]; then
-        chown -R "${mysql_user}:${mysql_user}" "${CONFIG_DIR}/data/mariadb"
-        chmod 750 "${CONFIG_DIR}/data/mariadb"
+    chown -R "${mysql_user}:${mysql_user}" "$datadir"
+    chmod 750 "$datadir"
+    if [[ -d "$datadir/mysql" ]]; then
         ok "MariaDB datadir already initialized."
         return 0
     fi
-
     install_db="$(find_mariadb_install_db)" || die "mariadb-install-db not found."
-    info "Initializing isolated MariaDB datadir..."
-
-    # Clear any partial failed init (often left as root-owned files).
-    find "${CONFIG_DIR}/data/mariadb" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-    chown -R "${mysql_user}:${mysql_user}" "${CONFIG_DIR}/data/mariadb"
-    chmod 750 "${CONFIG_DIR}/data/mariadb"
-
-    if ! "$install_db" --user="$mysql_user" --datadir="${CONFIG_DIR}/data/mariadb"; then
-        warn "Primary mariadb-install-db failed; retrying with basedir..."
-        if ! "$install_db" --user="$mysql_user" --basedir=/usr --datadir="${CONFIG_DIR}/data/mariadb"; then
-            err "Failed to initialize MariaDB datadir."
-            err "Check ownership (must be mysql:mysql) and AppArmor for custom datadir under ${CONFIG_DIR}."
-            die "Failed to initialize MariaDB datadir."
-        fi
+    info "Initializing an empty isolated MariaDB datadir..."
+    if ! "$install_db" --user="$mysql_user" --basedir=/usr --datadir="$datadir"; then
+        die "MariaDB initialization failed. Partial files were preserved; automatic retry/cleanup is disabled. Back up and inspect ${datadir}."
     fi
-    chown -R "${mysql_user}:${mysql_user}" "${CONFIG_DIR}/data/mariadb"
+    [[ -d "$datadir/mysql" ]] || die "Initialization did not create the mysql schema. Files were preserved."
     ok "MariaDB datadir initialized."
 }
 
@@ -1092,7 +1084,13 @@ show_service_urls() {
     fastapi_port="$(get_env_value "FASTAPI_PORT")"
     fastapi_port="${fastapi_port:-$FASTAPI_PORT_DEFAULT}"
     webhook_url="http://${ip}:${fastapi_port}/api/webhook"
-    pma_url="http://${ip}:${PHPMYADMIN_PORT}"
+    local pma_bind
+    pma_bind="$(get_env_value PHPMYADMIN_BIND)"
+    pma_bind="${pma_bind:-127.0.0.1}"
+    if is_native_mode; then
+        pma_bind="$(native_phpmyadmin_bind)" || return 1
+    fi
+    pma_url="http://${pma_bind}:${PHPMYADMIN_PORT}"
 
     echo
     info "Webhook (set in Pasarguard panel):"
@@ -1100,7 +1098,8 @@ show_service_urls() {
     echo -e "  ${C_DIM}Header:${C_RESET}  x-webhook-secret: <from DB table secrets, name=webhook_secret>"
     echo -e "  ${C_DIM}Note:${C_RESET}   crypto_key / webhook_secret are stored in DB (not .env)"
     echo
-    info "phpMyAdmin:"
+    info "phpMyAdmin (loopback by default; use an SSH tunnel):"
+    info "Tunnel: ssh -L ${PHPMYADMIN_PORT}:127.0.0.1:${PHPMYADMIN_PORT} user@${ip}"
     echo -e "  ${C_DIM}URL:${C_RESET}  ${pma_url}"
     echo
     warn "Replace the IP with your domain if you use one."
@@ -1408,22 +1407,28 @@ pull_images() {
 }
 
 wait_for_containers_healthy() {
-    local i=0
-    local max=90
-    local bot_state
-
-    info "Waiting for containers..."
-    while (( i < max )); do
-        bot_state="$(get_container_state pasarguardbot)"
-        if [[ "$bot_state" == "running" ]]; then
-            ok "Bot container is running."
-            return 0
+    local deadline=$((SECONDS + 120)) consecutive=0 previous="" identity="" cid=""
+    info "Waiting for stable bot readiness (Telegram startup, SQL, Redis, and enabled API)..."
+    while (( SECONDS < deadline )); do
+        cid="$(docker_compose ps -q bot 2>/dev/null)" || cid=""
+        identity=""
+        if [[ -n "$cid" ]]; then
+            identity="$(docker inspect --format '{{.State.StartedAt}}' "$cid" 2>/dev/null)" || identity=""
         fi
+        if [[ -n "$cid" && -n "$identity" ]] && timeout 7 docker exec "$cid" /app/.venv/bin/python /app/healthcheck.py >/dev/null 2>&1; then
+            [[ "${cid}/${identity}" == "$previous" ]] || consecutive=0
+            consecutive=$((consecutive + 1))
+            if (( consecutive >= 3 )); then
+                ok "Bot readiness confirmed in three consecutive probes."
+                return 0
+            fi
+        else
+            consecutive=0
+        fi
+        previous="${cid}/${identity}"
         sleep 2
-        i=$((i + 2))
     done
-
-    warn "Timed out waiting for bot container. Current status:"
+    err "Bot readiness timed out. Missing/old healthcheck code, Telegram, SQL, Redis or API startup may be the cause."
     docker_compose ps || true
     return 1
 }
@@ -1909,8 +1914,37 @@ EOF
     chown root:root "${CONF_DIR}/mariadb.cnf"
 }
 
+native_phpmyadmin_bind() {
+    local raw
+    raw="$(get_env_value PHPMYADMIN_BIND)"
+    python3 - "$raw" <<'PYIP'
+import ipaddress, sys
+value = sys.argv[1].split("#", 1)[0].strip()
+if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+    value = value[1:-1]
+value = value or "127.0.0.1"
+if value.startswith("[") and value.endswith("]"):
+    value = value[1:-1]
+if "%" in value:
+    raise SystemExit("Scoped IPv6 addresses are not supported for PHPMYADMIN_BIND.")
+try:
+    address = ipaddress.ip_address(value)
+except ValueError:
+    raise SystemExit("PHPMYADMIN_BIND must be an IP address, not a hostname or command.")
+if address.version == 6:
+    print(f"[{address}]")
+else:
+    print(address)
+PYIP
+}
+
 write_native_systemd_units() {
-    local mysqld_bin uv_bin redis_bin
+    local mysqld_bin uv_bin redis_bin pma_bind
+    pma_bind="$(native_phpmyadmin_bind)" || die "Invalid phpMyAdmin bind address. Units were not changed."
+    case "$pma_bind" in
+        127.*|"[::1]") ;;
+        *) warn "phpMyAdmin is explicitly bound outside loopback without TLS. Restrict it with a firewall or SSH tunnel." ;;
+    esac
     mysqld_bin="$(find_mysqld_bin)" || die "mysqld/mariadbd not found after package install."
     uv_bin="$(command -v uv)" || die "uv not found after install."
     redis_bin="$(command -v redis-server)" || die "redis-server not found after package install."
@@ -1965,7 +1999,7 @@ Wants=pasarguardbot-mariadb.service
 [Service]
 Type=simple
 WorkingDirectory=${PHPMYADMIN_DIR}
-ExecStart=/usr/bin/php -S 0.0.0.0:${PHPMYADMIN_PORT} -t ${PHPMYADMIN_DIR}
+ExecStart=/usr/bin/php -S ${pma_bind}:${PHPMYADMIN_PORT} -t ${PHPMYADMIN_DIR}
 Restart=on-failure
 RestartSec=3
 
@@ -1984,8 +2018,9 @@ Type=simple
 WorkingDirectory=${APP_DIR}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin
 EnvironmentFile=-${ENV_FILE}
-ExecStartPre=${uv_bin} run alembic upgrade head
-ExecStart=${uv_bin} run main.py
+Environment=UV_NO_SYNC=1
+ExecStartPre=${uv_bin} run --no-sync alembic upgrade head
+ExecStart=${uv_bin} run --no-sync main.py
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=120
@@ -2382,24 +2417,29 @@ purge_pasarguardbot_everything() {
 }
 
 wait_for_native_bot() {
-    local i=0
-    local max=90
-    info "Waiting for bot service..."
-    while (( i < max )); do
-        if systemctl is-active --quiet pasarguardbot.service; then
-            ok "Bot service is active."
-            return 0
+    local deadline=$((SECONDS + 120)) consecutive=0 previous="" identity=""
+    info "Waiting for stable bot readiness (Telegram startup, SQL, Redis, and enabled API)..."
+    while (( SECONDS < deadline )); do
+        identity="$(systemctl show -p MainPID --value pasarguardbot.service 2>/dev/null)" || identity=""
+        if [[ "$identity" =~ ^[1-9][0-9]*$ ]] && systemctl is-active --quiet pasarguardbot.service &&
+            (cd "$APP_DIR" && timeout 7 .venv/bin/python healthcheck.py >/dev/null 2>&1); then
+            [[ "$identity" == "$previous" ]] || consecutive=0
+            consecutive=$((consecutive + 1))
+            if (( consecutive >= 3 )); then
+                ok "Bot readiness confirmed in three consecutive probes."
+                return 0
+            fi
+        else
+            consecutive=0
         fi
+        previous="$identity"
         if systemctl is-failed --quiet pasarguardbot.service; then
-            warn "Bot service failed. Recent logs:"
-            journalctl -u pasarguardbot -n 40 --no-pager || true
+            err "Bot service failed. Inspect: journalctl -u pasarguardbot -n 40 --no-pager"
             return 1
         fi
         sleep 2
-        i=$((i + 2))
     done
-    warn "Timed out waiting for bot service."
-    systemctl status pasarguardbot --no-pager || true
+    err "Bot readiness timed out. Inspect logs; no successful deployment is being reported."
     return 1
 }
 
@@ -2419,7 +2459,7 @@ show_native_install_summary() {
     echo
     info "Ports:"
     echo -e "  ${C_DIM}FastAPI:${C_RESET}      ${FASTAPI_PORT_DEFAULT} (public)"
-    echo -e "  ${C_DIM}phpMyAdmin:${C_RESET}   ${PHPMYADMIN_PORT} (public)"
+    echo -e "  ${C_DIM}phpMyAdmin:${C_RESET}   ${PHPMYADMIN_PORT} (PHPMYADMIN_BIND; default localhost only)"
     echo -e "  ${C_DIM}Redis:${C_RESET}        ${REDIS_PORT} (localhost only)"
     echo -e "  ${C_DIM}MariaDB:${C_RESET}      ${MARIADB_PORT} (localhost only)"
     show_service_urls
@@ -2459,13 +2499,9 @@ action_install_docker() {
         die "docker compose up failed. Check logs with: docker compose -f ${COMPOSE_FILE} logs"
     fi
 
-    if ! wait_for_containers_healthy; then
-        warn "Bot container did not reach 'running' within the timeout — it may still be starting."
-        info "Check logs:   docker compose -f ${COMPOSE_FILE} logs bot"
-        info "Check status: pasarguardbot → option 7"
-    fi
     set_install_mode docker
     set_install_branch "$branch"
+    wait_for_containers_healthy || die "Installation files exist, but readiness failed. Inspect logs; do not reinstall over existing data."
 
     echo
     ok "Installation completed successfully (docker, branch=${branch})!"
@@ -2482,7 +2518,7 @@ action_install_docker() {
     echo
     info "Ports:"
     echo -e "  ${C_DIM}FastAPI:${C_RESET}      ${FASTAPI_PORT_DEFAULT} (public)"
-    echo -e "  ${C_DIM}phpMyAdmin:${C_RESET}   ${PHPMYADMIN_PORT} (public)"
+    echo -e "  ${C_DIM}phpMyAdmin:${C_RESET}   ${PHPMYADMIN_PORT} (PHPMYADMIN_BIND; default localhost only)"
     echo -e "  ${C_DIM}Redis:${C_RESET}        ${REDIS_PORT} (localhost only)"
     echo -e "  ${C_DIM}MariaDB:${C_RESET}      ${MARIADB_PORT} (localhost only)"
     show_service_urls
@@ -2521,8 +2557,9 @@ action_install_native() {
     sync_native_python_deps
     write_native_systemd_units
     install_manager_command
+    set_install_mode native
     start_native_services
-    wait_for_native_bot || true
+    wait_for_native_bot || die "Bot did not reach readiness. Inspect logs; files may have changed. No automatic database rollback was attempted."
     set_install_mode native
     set_install_branch "$branch"
     show_native_install_summary
@@ -2705,7 +2742,7 @@ action_update_docker() {
         die "Update failed during docker compose up."
     fi
 
-    wait_for_containers_healthy || true
+    wait_for_containers_healthy || die "Update did not reach readiness. Files/images may have changed; inspect logs. No automatic database rollback was attempted."
     prune_dangling_images_safe
 
     script_url="https://raw.githubusercontent.com/Mohammad1724/PasarguardBotMRM/${branch}/scripts/pasarguardbot.sh"
@@ -2738,11 +2775,11 @@ action_update_native() {
     write_native_systemd_units
 
     info "Restarting native services..."
-    native_systemctl restart pasarguardbot-redis.service || true
-    native_systemctl restart pasarguardbot-mariadb.service || true
-    native_systemctl restart pasarguardbot-phpmyadmin.service || true
+    native_systemctl restart pasarguardbot-redis.service || die "Redis restart failed."
+    native_systemctl restart pasarguardbot-mariadb.service || die "MariaDB restart failed."
+    native_systemctl restart pasarguardbot-phpmyadmin.service || die "phpMyAdmin restart failed."
     native_systemctl restart pasarguardbot.service
-    wait_for_native_bot || true
+    wait_for_native_bot || die "Bot did not reach readiness. Inspect logs; files may have changed. No automatic database rollback was attempted."
 
     new_ver="$(get_installed_bot_version)"
     ok "Update complete (${old_ver} → ${new_ver}) [branch=${branch}]."
@@ -2917,19 +2954,68 @@ action_edit_env() {
     pause
 }
 
+write_current_docker_images() {
+    local override="$1" service cid image services
+    services="$(docker_compose config --services)" || { err "Cannot read current Compose services."; return 1; }
+    [[ -n "$services" ]] || { err "No Compose services found."; return 1; }
+    chmod 600 "$override"
+    printf 'services:\n' >"$override"
+    while IFS= read -r service; do
+        if [[ ! "$service" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+            err "Invalid service name."; return 1
+        fi
+        cid="$(docker_compose ps -a -q "$service")" || cid=""
+        if [[ ! "$cid" =~ ^[a-f0-9]{12,64}$ ]]; then
+            err "No single existing container for ${service}. Use explicit Install/Update; no image will be guessed or downloaded."; return 1
+        fi
+        image="$(docker inspect --format '{{.Image}}' "$cid")" || image=""
+        if [[ ! "$image" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            err "Cannot identify current image for ${service}."; return 1
+        fi
+        printf '  %s:\n    image: "%s"\n    pull_policy: never\n' "$service" "$image" >>"$override"
+    done <<<"$services"
+}
+
+restart_docker_same_images() {
+    local override status=0
+    override="$(mktemp)"
+    write_current_docker_images "$override" || { rm -f "$override"; die "Cannot pin existing images. Nothing restarted."; }
+    docker_compose -f "$override" up -d --force-recreate --pull never --remove-orphans || status=$?
+    rm -f "$override"
+    [[ "$status" == 0 ]] || die "Restart failed; no images were downloaded. Inspect container status."
+    wait_for_containers_healthy || die "Restart did not reach readiness. No upgrade or database rollback was attempted."
+}
+
+restore_docker_same_images() {
+    local zip_path="$1" override status=0
+    override="$(mktemp)"
+    write_current_docker_images "$override" || { rm -f "$override"; err "Cannot pin images. Restore was refused before stopping services."; return 1; }
+    if ! docker_compose -f "$override" stop bot; then
+        status=1
+    elif ! docker_compose -f "$override" up -d --pull never mariadb redis; then
+        status=1
+    else
+        docker_compose -f "$override" run --rm --no-deps --entrypoint uv \
+            -v "${zip_path}:/restore/input.zip:ro" bot \
+            run --no-sync python -m app.services.restore_cli /restore/input.zip --offline \
+            --safety-dir /app/logs/restore-safety || status=$?
+    fi
+    rm -f "$override"
+    return "$status"
+}
+
 action_restart_quiet() {
     if is_native_mode; then
-        native_systemctl restart pasarguardbot-redis.service || true
-        native_systemctl restart pasarguardbot-mariadb.service || true
-        native_systemctl restart pasarguardbot-phpmyadmin.service || true
-        native_systemctl restart pasarguardbot.service
+        native_systemctl restart pasarguardbot-redis.service || die "Redis restart failed."
+        native_systemctl restart pasarguardbot-mariadb.service || die "MariaDB restart failed."
+        native_systemctl restart pasarguardbot-phpmyadmin.service || die "phpMyAdmin restart failed."
+        native_systemctl restart pasarguardbot.service || die "Bot restart failed."
+        wait_for_native_bot || die "Restart did not reach readiness. Inspect logs."
         ok "Full restart completed (native)."
         return 0
     fi
-    docker_compose pull bot || true
-    docker_compose down
-    docker_compose up -d
-    ok "Full restart completed."
+    restart_docker_same_images
+    ok "Full restart completed with the same images (no upgrade)."
 }
 
 action_restart() {
@@ -3009,15 +3095,10 @@ action_restore() {
                 --safety-dir "${CONFIG_DIR}/logs/restore-safety"
         ) || status=$?
     else
-        docker_compose stop bot || die "Cannot stop bot; refusing restore."
-        docker_compose up -d mariadb redis || die "Cannot start database/Redis."
-        docker_compose run --rm --no-deps --entrypoint uv \
-            -v "${zip_path}:/restore/input.zip:ro" bot \
-            run --no-sync python -m app.services.restore_cli /restore/input.zip --offline \
-            --safety-dir /app/logs/restore-safety || status=$?
+        restore_docker_same_images "$zip_path" || status=$?
     fi
     if [[ "$status" -ne 0 ]]; then
-        die "Restore failed. Bot remains STOPPED. Check logs and safety backup in ${CONFIG_DIR}/logs/restore-safety."
+        die "Restore failed or was refused. Inspect service status and safety backup in ${CONFIG_DIR}/logs/restore-safety. Bot is not automatically restarted."
     fi
     ok "Restore, migrations and secret loading completed."
     local do_restart
